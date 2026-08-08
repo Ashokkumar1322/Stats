@@ -32,12 +32,17 @@ try:
     df_25_26 = clean_columns(df_25_26)
     df_26_27 = clean_columns(df_26_27)
 
+    # 4. Show FY 25-26 Data (Setting index freezes the Department column!)
+    st.header("Historical Month-Wise Figures (FY 25-26)")
+    st.dataframe(df_25_26.set_index('Department'))
+
+    # 5. Show FY 26-27 Editable Data (Setting index freezes the Department column!)
     st.header("Enter New Month Figures (FY 26-27)")
     st.write("Edit the table below to add figures for August through March:")
-    # st.data_editor allows you to type directly into the web app!
-    edited_df_26_27 = st.data_editor(df_26_27, num_rows="dynamic")
+    # We set the index to freeze it, then reset it after editing so calculations still work
+    edited_df_26_27 = st.data_editor(df_26_27.set_index('Department'), num_rows="dynamic").reset_index()
 
-    # 4. Filters & Dropdowns
+    # 6. Filters & Dropdowns
     st.sidebar.header("Filters")
     departments = edited_df_26_27['Department'].dropna().unique()
     selected_dept = st.sidebar.selectbox("Select Department", ["All"] + list(departments))
@@ -45,7 +50,7 @@ try:
     months = ['APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR']
     selected_month = st.sidebar.selectbox("Calculate YTD Up To Month:", months, index=3) # Defaults to JUL
 
-    # 5. Calculate Accretion up to selected month
+    # 7. Calculate Accretion up to selected month
     idx = months.index(selected_month)
     ytd_months = months[:idx+1]
     
@@ -56,19 +61,30 @@ try:
     merged = pd.merge(df_25_26[['Department', 'YTD_25_26']], edited_df_26_27[['Department', 'YTD_26_27']], on='Department')
     merged['Accretion'] = merged['YTD_26_27'] - merged['YTD_25_26']
 
-    # Apply Department Filter
+    # Apply Department Filter and format the final table
     if selected_dept != "All":
         merged = merged[merged['Department'] == selected_dept]
+        final_table = merged.sort_values(by="Accretion", ascending=False).reset_index(drop=True)
+    else:
+        # Separate the "Sum" row, sort the rest, then put "Sum" at the bottom
+        sum_row = merged[merged['Department'] == 'Sum for all departments']
+        other_rows = merged[merged['Department'] != 'Sum for all departments']
+        
+        other_rows = other_rows.sort_values(by="Accretion", ascending=False)
+        final_table = pd.concat([other_rows, sum_row]).reset_index(drop=True)
+        
+    # Make index start from 1 instead of 0 so serial numbers are clean
+    final_table.index = final_table.index + 1
 
-    # 6. Display Results
+    # 8. Display Results
     st.header(f"YTD Accretion Results (Up to {selected_month})")
-    st.dataframe(merged.sort_values(by="Accretion", ascending=False))
+    st.dataframe(final_table)
     
     # Best/Worst performers summary
-    if selected_dept == "All":
+    if selected_dept == "All" and len(final_table) > 1:
         st.subheader("Insights")
-        best = merged.iloc[0]
-        worst = merged.iloc[-1]
+        best = final_table.iloc[0]
+        worst = final_table.iloc[-2] # -2 because the last row (-1) is the Sum row!
         st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f}")
         st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f}")
 
