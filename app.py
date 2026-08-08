@@ -63,10 +63,10 @@ try:
     merged = pd.merge(df_25_26[['Department', 'YTD_25_26']], edited_df_26_27[['Department', 'YTD_26_27']], on='Department')
     merged['Accretion'] = merged['YTD_26_27'] - merged['YTD_25_26']
     
-    # NEW: Calculate Accretion Percentage ((New - Old) / Old)
+    # NEW: Calculate Accretion Percentage and multiply by 100 here!
     merged['Accretion %'] = np.where(
         merged['YTD_25_26'] != 0, 
-        (merged['Accretion'] / merged['YTD_25_26']), 
+        (merged['Accretion'] / merged['YTD_25_26']) * 100, 
         0
     )
 
@@ -88,7 +88,7 @@ try:
     # 8. Display Results
     st.header(f"YTD Accretion Results (Up to {selected_month})")
     
-    # NEW: Display dataframe with formatted percentage column
+    # Display dataframe with formatted percentage column
     st.dataframe(
         final_table,
         column_config={
@@ -99,13 +99,13 @@ try:
         }
     )
     
-    # Best/Worst performers summary (updated to also show percentage)
+    # Best/Worst performers summary (Removed the *100 here since it's already done above)
     if selected_dept == "All" and len(final_table) > 1:
         st.subheader("Insights")
         best = final_table.iloc[0]
         worst = final_table.iloc[-2] # -2 because the last row (-1) is the Sum row!
-        st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f} ({best['Accretion %']*100:.2f}%)")
-        st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f} ({worst['Accretion %']*100:.2f}%)")
+        st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f} ({best['Accretion %']:.2f}%)")
+        st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f} ({worst['Accretion %']:.2f}%)")
 
 except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
