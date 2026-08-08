@@ -161,5 +161,6 @@ try:
         worst_range = final_table_range.iloc[-2] # -2 because the last row is the Sum row
         st.success(f"📈 **Best Performing ({start_month} to {selected_month}):** {best_range['Department']} with an accretion of {best_range['Accretion']:,.0f} ({best_range['Accretion %']:.2f}%)")
         st.error(f"📉 **Needs Attention ({start_month} to {selected_month}):** {worst_range['Department']} with an accretion of {worst_range['Accretion']:,.0f} ({worst_range['Accretion %']:.2f}%)")
-    # -------------------------------------------------------------------except Exception as e:
+    # -------------------------------------------------------------------
+except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
