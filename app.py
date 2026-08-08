@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np # Added for the percentage calculation
 
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Department-Wise Premium & Accretion Dashboard")
@@ -54,12 +55,20 @@ try:
     idx = months.index(selected_month)
     ytd_months = months[:idx+1]
     
-    df_25_26['YTD_25_26'] = df_25_26[ytd_months].sum(axis=1)
-    edited_df_26_27['YTD_26_27'] = edited_df_26_27[ytd_months].sum(axis=1)
+    # Coercing to numeric is safer when using data_editor so string typos don't break the sum
+    df_25_26['YTD_25_26'] = df_25_26[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
+    edited_df_26_27['YTD_26_27'] = edited_df_26_27[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
 
     # Merge for comparison
     merged = pd.merge(df_25_26[['Department', 'YTD_25_26']], edited_df_26_27[['Department', 'YTD_26_27']], on='Department')
     merged['Accretion'] = merged['YTD_26_27'] - merged['YTD_25_26']
+    
+    # NEW: Calculate Accretion Percentage ((New - Old) / Old)
+    merged['Accretion %'] = np.where(
+        merged['YTD_25_26'] != 0, 
+        (merged['Accretion'] / merged['YTD_25_26']), 
+        0
+    )
 
     # Apply Department Filter and format the final table
     if selected_dept != "All":
@@ -78,15 +87,25 @@ try:
 
     # 8. Display Results
     st.header(f"YTD Accretion Results (Up to {selected_month})")
-    st.dataframe(final_table)
     
-    # Best/Worst performers summary
+    # NEW: Display dataframe with formatted percentage column
+    st.dataframe(
+        final_table,
+        column_config={
+            "Accretion %": st.column_config.NumberColumn(
+                "Accretion (%)",
+                format="%.2f%%"
+            )
+        }
+    )
+    
+    # Best/Worst performers summary (updated to also show percentage)
     if selected_dept == "All" and len(final_table) > 1:
         st.subheader("Insights")
         best = final_table.iloc[0]
         worst = final_table.iloc[-2] # -2 because the last row (-1) is the Sum row!
-        st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f}")
-        st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f}")
+        st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f} ({best['Accretion %']*100:.2f}%)")
+        st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f} ({worst['Accretion %']*100:.2f}%)")
 
 except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
