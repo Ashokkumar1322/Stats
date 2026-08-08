@@ -5,7 +5,7 @@ st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Department-Wise Premium & Accretion Dashboard")
 
 # 1. File Upload or Default File
-uploaded_file = st.sidebar.file_upload("Upload your Excel File", type=['xls', 'xlsx'])
+uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
 file_path = uploaded_file if uploaded_file else "for github stats.xls"
 
 try:
