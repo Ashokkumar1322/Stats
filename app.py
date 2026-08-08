@@ -20,10 +20,12 @@ try:
         for c in df.columns:
             if 'Dept' in str(c):
                 new_cols.append('Department')
-            elif isinstance(c, pd.Timestamp):
-                new_cols.append(c.strftime('%b').upper())
             else:
-                new_cols.append(str(c))
+                try:
+                    # Convert any date-like header to a 3-letter uppercase month
+                    new_cols.append(pd.to_datetime(c).strftime('%b').upper())
+                except:
+                    new_cols.append(str(c))
         df.columns = new_cols
         return df
 
