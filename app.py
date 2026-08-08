@@ -106,6 +106,59 @@ try:
         worst = final_table.iloc[-2] # -2 because the last row (-1) is the Sum row!
         st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f} ({best['Accretion %']:.2f}%)")
         st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f} ({worst['Accretion %']:.2f}%)")
+# -------------------------------------------------------------------
+    # 9. NEW SECTION: "For the Month" Accretion Results
+    # -------------------------------------------------------------------
+    # Calculate values for ONLY the single selected month (e.g., just JUL)
+    df_25_26['FTM_25_26'] = pd.to_numeric(df_25_26[selected_month], errors='coerce').fillna(0)
+    edited_df_26_27['FTM_26_27'] = pd.to_numeric(edited_df_26_27[selected_month], errors='coerce').fillna(0)
 
+    # Merge for comparison
+    merged_ftm = pd.merge(df_25_26[['Department', 'FTM_25_26']], edited_df_26_27[['Department', 'FTM_26_27']], on='Department')
+    merged_ftm['Accretion'] = merged_ftm['FTM_26_27'] - merged_ftm['FTM_25_26']
+    
+    # Calculate Accretion Percentage
+    merged_ftm['Accretion %'] = np.where(
+        merged_ftm['FTM_25_26'] != 0, 
+        (merged_ftm['Accretion'] / merged_ftm['FTM_25_26']) * 100, 
+        0
+    )
+
+    # Apply Department Filter and format the final table
+    if selected_dept != "All":
+        merged_ftm = merged_ftm[merged_ftm['Department'] == selected_dept]
+        final_table_ftm = merged_ftm.sort_values(by="Accretion", ascending=False).reset_index(drop=True)
+    else:
+        # Separate the "Sum" row, sort the rest, then put "Sum" at the bottom
+        sum_row_ftm = merged_ftm[merged_ftm['Department'] == 'Sum for all departments']
+        other_rows_ftm = merged_ftm[merged_ftm['Department'] != 'Sum for all departments']
+        
+        other_rows_ftm = other_rows_ftm.sort_values(by="Accretion", ascending=False)
+        final_table_ftm = pd.concat([other_rows_ftm, sum_row_ftm]).reset_index(drop=True)
+        
+    # Make index start from 1 instead of 0
+    final_table_ftm.index = final_table_ftm.index + 1
+
+    # Display Results (Title dynamically updates based on selected month!)
+    st.header(f"For the Month Accretion Results (For {selected_month})")
+    
+    st.dataframe(
+        final_table_ftm,
+        column_config={
+            "Accretion %": st.column_config.NumberColumn(
+                "Accretion (%)",
+                format="%.2f%%"
+            )
+        }
+    )
+    
+    # Best/Worst performers summary for the single month
+    if selected_dept == "All" and len(final_table_ftm) > 1:
+        st.subheader(f"Insights (For {selected_month})")
+        best_ftm = final_table_ftm.iloc[0]
+        worst_ftm = final_table_ftm.iloc[-2] # -2 because the last row is the Sum row
+        st.success(f"📈 **Best Performing ({selected_month}):** {best_ftm['Department']} with an accretion of {best_ftm['Accretion']:,.0f} ({best_ftm['Accretion %']:.2f}%)")
+        st.error(f"📉 **Needs Attention ({selected_month}):** {worst_ftm['Department']} with an accretion of {worst_ftm['Accretion']:,.0f} ({worst_ftm['Accretion %']:.2f}%)")
+    # -------------------------------------------------------------------
 except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
