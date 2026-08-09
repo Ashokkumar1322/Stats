@@ -188,3 +188,55 @@ try:
 
 except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
+# -------------------------------------------------------------------
+    # 10. NEW: Channel-Wise Data in an Expander (With Specific Filters)
+    # -------------------------------------------------------------------
+    st.divider()
+    
+    with st.expander("📁 View Channel-Wise Data (Click to Expand)", expanded=False):
+        st.subheader("Channel-Wise Figures")
+        
+        # Create a layout with 3 columns for our specific expander filters
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            channels = df_chan_25_26['Channel'].dropna().unique()
+            selected_channel = st.selectbox("Filter by Channel:", ["All"] + list(channels), key="chan_dropdown")
+            
+        with col2:
+            # Specific search for the 'Name' column
+            search_name = st.text_input("Search by Name (Agent):", "", key="name_search")
+            
+        with col3:
+            # Specific search for the 'Party Code' column
+            search_code = st.text_input("Search by Party Code:", "", key="code_search")
+            
+        # Start with a copy of the full data
+        show_chan_25_26 = df_chan_25_26.copy()
+        show_chan_26_27 = df_chan_26_27.copy()
+        
+        # 1. Apply the Channel Dropdown filter
+        if selected_channel != "All":
+            show_chan_25_26 = show_chan_25_26[show_chan_25_26['Channel'] == selected_channel]
+            show_chan_26_27 = show_chan_26_27[show_chan_26_27['Channel'] == selected_channel]
+            
+        # 2. Apply the Name Search filter
+        if search_name:
+            if 'Name' in show_chan_25_26.columns:
+                show_chan_25_26 = show_chan_25_26[show_chan_25_26['Name'].astype(str).str.contains(search_name, case=False, na=False)]
+            if 'Name' in show_chan_26_27.columns:
+                show_chan_26_27 = show_chan_26_27[show_chan_26_27['Name'].astype(str).str.contains(search_name, case=False, na=False)]
+                
+        # 3. Apply the Party Code Search filter
+        if search_code:
+            if 'Party Code' in show_chan_25_26.columns:
+                show_chan_25_26 = show_chan_25_26[show_chan_25_26['Party Code'].astype(str).str.contains(search_code, case=False, na=False)]
+            if 'Party Code' in show_chan_26_27.columns:
+                show_chan_26_27 = show_chan_26_27[show_chan_26_27['Party Code'].astype(str).str.contains(search_code, case=False, na=False)]
+
+        # Display the filtered DataFrames
+        st.write("**Historical (FY 25-26)**")
+        st.dataframe(show_chan_25_26.set_index('Channel'), use_container_width=False)
+        
+        st.write("**Enter New Figures (FY 26-27)**")
+        st.data_editor(show_chan_26_27.set_index('Channel'), num_rows="dynamic")
