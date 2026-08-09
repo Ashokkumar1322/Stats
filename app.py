@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-import numpy as np # Added for the percentage calculation
+import numpy as np 
 
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Department-Wise Premium & Accretion Dashboard")
@@ -33,14 +33,14 @@ try:
     df_25_26 = clean_columns(df_25_26)
     df_26_27 = clean_columns(df_26_27)
 
-    # 4. Show FY 25-26 Data (Setting index freezes the Department column!)
+    # 4. Show FY 25-26 Data 
     st.header("Historical Month-Wise Figures (FY 25-26)")
-    st.dataframe(df_25_26.set_index('Department'))
+    # use_container_width=False forces a horizontal scrollbar instead of squishing columns
+    st.dataframe(df_25_26.set_index('Department'), use_container_width=False)
 
-    # 5. Show FY 26-27 Editable Data (Setting index freezes the Department column!)
+    # 5. Show FY 26-27 Editable Data 
     st.header("Enter New Month Figures (FY 26-27)")
     st.write("Edit the table below to add figures for August through March:")
-    # We set the index to freeze it, then reset it after editing so calculations still work
     edited_df_26_27 = st.data_editor(df_26_27.set_index('Department'), num_rows="dynamic").reset_index()
 
     # 6. Filters & Dropdowns
@@ -49,118 +49,114 @@ try:
     selected_dept = st.sidebar.selectbox("Select Department", ["All"] + list(departments))
     
     months = ['APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC', 'JAN', 'FEB', 'MAR']
-    selected_month = st.sidebar.selectbox("Calculate YTD Up To Month:", months, index=3) # Defaults to JUL
+    
+    # Filter for the top section (YTD)
+    selected_month = st.sidebar.selectbox("Calculate YTD Up To Month:", months, index=3) 
+    # NEW: Independent filter for the bottom section (For the Month)
+    selected_month_for = st.sidebar.selectbox("Show 'For the Month' Results Up To:", months, index=3) 
 
-    # 7. Calculate Accretion up to selected month
+    # -------------------------------------------------------------------
+    # 7. Calculate YTD Data Dynamically (Side-by-Side Cumulative)
+    # -------------------------------------------------------------------
     idx = months.index(selected_month)
     ytd_months = months[:idx+1]
     
-    # Coercing to numeric is safer when using data_editor so string typos don't break the sum
-    df_25_26['YTD_25_26'] = df_25_26[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
-    edited_df_26_27['YTD_26_27'] = edited_df_26_27[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
-
-    # Merge for comparison
-    merged = pd.merge(df_25_26[['Department', 'YTD_25_26']], edited_df_26_27[['Department', 'YTD_26_27']], on='Department')
-    merged['Accretion'] = merged['YTD_26_27'] - merged['YTD_25_26']
+    merged_ytd = df_25_26[['Department']].copy()
     
-    # NEW: Calculate Accretion Percentage and multiply by 100 here!
-    merged['Accretion %'] = np.where(
-        merged['YTD_25_26'] != 0, 
-        (merged['Accretion'] / merged['YTD_25_26']) * 100, 
+    # Loop through each month up to the selected one to build cumulative columns
+    for i, m in enumerate(ytd_months):
+        curr_months = months[:i+1]
+        merged_ytd[f'Up to {m} 25'] = df_25_26[curr_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
+        merged_ytd[f'Up to {m} 26'] = edited_df_26_27[curr_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
+
+    # Calculate final accretion comparing the very last month selected
+    merged_ytd['Accretion'] = merged_ytd[f'Up to {selected_month} 26'] - merged_ytd[f'Up to {selected_month} 25']
+    merged_ytd['Accretion %'] = np.where(
+        merged_ytd[f'Up to {selected_month} 25'] != 0, 
+        (merged_ytd['Accretion'] / merged_ytd[f'Up to {selected_month} 25']) * 100, 
         0
     )
 
-    # Apply Department Filter and format the final table
+    # Apply Department Filter and format the final YTD table
     if selected_dept != "All":
-        merged = merged[merged['Department'] == selected_dept]
-        final_table = merged.sort_values(by="Accretion", ascending=False).reset_index(drop=True)
+        merged_ytd = merged_ytd[merged_ytd['Department'] == selected_dept]
+        final_table_ytd = merged_ytd.sort_values(by="Accretion", ascending=False).reset_index(drop=True)
     else:
-        # Separate the "Sum" row, sort the rest, then put "Sum" at the bottom
-        sum_row = merged[merged['Department'] == 'Sum for all departments']
-        other_rows = merged[merged['Department'] != 'Sum for all departments']
-        
+        sum_row = merged_ytd[merged_ytd['Department'] == 'Sum for all departments']
+        other_rows = merged_ytd[merged_ytd['Department'] != 'Sum for all departments']
         other_rows = other_rows.sort_values(by="Accretion", ascending=False)
-        final_table = pd.concat([other_rows, sum_row]).reset_index(drop=True)
+        final_table_ytd = pd.concat([other_rows, sum_row]).reset_index(drop=True)
         
-    # Make index start from 1 instead of 0 so serial numbers are clean
-    final_table.index = final_table.index + 1
+    final_table_ytd.index = final_table_ytd.index + 1
 
-    # 8. Display Results
+    # 8. Display YTD Results
     st.header(f"YTD Accretion Results (Up to {selected_month})")
     
-    # Display dataframe with formatted percentage column
     st.dataframe(
-        final_table,
+        final_table_ytd,
+        use_container_width=False, # Allows horizontal scroll if wide
         column_config={
-            "Accretion %": st.column_config.NumberColumn(
-                "Accretion (%)",
-                format="%.2f%%"
-            )
+            "Accretion %": st.column_config.NumberColumn("Accretion (%)", format="%.2f%%")
         }
     )
     
-    # Best/Worst performers summary (Removed the *100 here since it's already done above)
-    if selected_dept == "All" and len(final_table) > 1:
-        st.subheader("Insights")
-        best = final_table.iloc[0]
-        worst = final_table.iloc[-2] # -2 because the last row (-1) is the Sum row!
+    if selected_dept == "All" and len(final_table_ytd) > 1:
+        st.subheader(f"YTD Insights (Up to {selected_month})")
+        best = final_table_ytd.iloc[0]
+        worst = final_table_ytd.iloc[-2]
         st.success(f"📈 **Best Performing:** {best['Department']} with an accretion of {best['Accretion']:,.0f} ({best['Accretion %']:.2f}%)")
         st.error(f"📉 **Needs Attention:** {worst['Department']} with an accretion of {worst['Accretion']:,.0f} ({worst['Accretion %']:.2f}%)")
-# -------------------------------------------------------------------
-    # 9. NEW SECTION: "For the Month" (Range: Apr to Selected Month)
-    # -------------------------------------------------------------------
-    start_month = months[0] # Always 'APR'
-    
-    # Calculate the sum of the range (Apr to Selected Month)
-    df_25_26['Range_25_26'] = df_25_26[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
-    edited_df_26_27['Range_26_27'] = edited_df_26_27[ytd_months].apply(pd.to_numeric, errors='coerce').sum(axis=1)
 
-    # Merge for comparison
-    merged_range = pd.merge(df_25_26[['Department', 'Range_25_26']], edited_df_26_27[['Department', 'Range_26_27']], on='Department')
-    merged_range['Accretion'] = merged_range['Range_26_27'] - merged_range['Range_25_26']
+    # -------------------------------------------------------------------
+    # 9. NEW SECTION: "For the Month" Dynamically (Side-by-Side Individuals)
+    # -------------------------------------------------------------------
+    start_month = months[0]
+    idx_for = months.index(selected_month_for)
+    for_months = months[:idx_for+1]
     
-    # Calculate Accretion Percentage
+    merged_range = df_25_26[['Department']].copy()
+
+    # Loop to grab the individual month figures instead of summing them
+    for m in for_months:
+        merged_range[f'For {m} 25'] = pd.to_numeric(df_25_26[m], errors='coerce').fillna(0)
+        merged_range[f'For {m} 26'] = pd.to_numeric(edited_df_26_27[m], errors='coerce').fillna(0)
+
+    # Calculate Accretion specifically for the end month chosen in the dropdown
+    merged_range['Accretion'] = merged_range[f'For {selected_month_for} 26'] - merged_range[f'For {selected_month_for} 25']
     merged_range['Accretion %'] = np.where(
-        merged_range['Range_25_26'] != 0, 
-        (merged_range['Accretion'] / merged_range['Range_25_26']) * 100, 
+        merged_range[f'For {selected_month_for} 25'] != 0, 
+        (merged_range['Accretion'] / merged_range[f'For {selected_month_for} 25']) * 100, 
         0
     )
 
-    # Apply Department Filter and format the final table
+    # Apply Department Filter and format the final range table
     if selected_dept != "All":
         merged_range = merged_range[merged_range['Department'] == selected_dept]
         final_table_range = merged_range.sort_values(by="Accretion", ascending=False).reset_index(drop=True)
     else:
-        # Separate the "Sum" row, sort the rest, then put "Sum" at the bottom
         sum_row_range = merged_range[merged_range['Department'] == 'Sum for all departments']
         other_rows_range = merged_range[merged_range['Department'] != 'Sum for all departments']
-        
         other_rows_range = other_rows_range.sort_values(by="Accretion", ascending=False)
         final_table_range = pd.concat([other_rows_range, sum_row_range]).reset_index(drop=True)
         
-    # Make index start from 1 instead of 0
     final_table_range.index = final_table_range.index + 1
 
-    # Display Results (Title dynamically updates to "For APR to JUL", "For APR to AUG", etc.)
-    st.header(f"YTD Accretion Results (For {start_month} to {selected_month})")
+    st.header(f"Monthly Accretion Results (For {start_month} to {selected_month_for})")
     
     st.dataframe(
         final_table_range,
+        use_container_width=False, # Allows horizontal scroll if wide
         column_config={
-            "Accretion %": st.column_config.NumberColumn(
-                "Accretion (%)",
-                format="%.2f%%"
-            )
+            "Accretion %": st.column_config.NumberColumn("Accretion (%)", format="%.2f%%")
         }
     )
     
-    # Best/Worst performers summary for the range
     if selected_dept == "All" and len(final_table_range) > 1:
-        st.subheader(f"Insights (For {start_month} to {selected_month})")
+        st.subheader(f"Monthly Insights (For {selected_month_for} alone)")
         best_range = final_table_range.iloc[0]
-        worst_range = final_table_range.iloc[-2] # -2 because the last row is the Sum row
-        st.success(f"📈 **Best Performing ({start_month} to {selected_month}):** {best_range['Department']} with an accretion of {best_range['Accretion']:,.0f} ({best_range['Accretion %']:.2f}%)")
-        st.error(f"📉 **Needs Attention ({start_month} to {selected_month}):** {worst_range['Department']} with an accretion of {worst_range['Accretion']:,.0f} ({worst_range['Accretion %']:.2f}%)")
-    # -------------------------------------------------------------------
+        worst_range = final_table_range.iloc[-2]
+        st.success(f"📈 **Best Performing ({selected_month_for}):** {best_range['Department']} with an accretion of {best_range['Accretion']:,.0f} ({best_range['Accretion %']:.2f}%)")
+        st.error(f"📉 **Needs Attention ({selected_month_for}):** {worst_range['Department']} with an accretion of {worst_range['Accretion']:,.0f} ({worst_range['Accretion %']:.2f}%)")
+
 except Exception as e:
     st.error(f"Error loading data. Please ensure 'for github stats.xls' is formatted correctly. Details: {e}")
