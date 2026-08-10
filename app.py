@@ -1,19 +1,23 @@
 import streamlit as st
 import pandas as pd
+import os
 
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Complete Premium Dashboard")
 st.write("Expand any section below to view and filter the data.")
 
-# 1. File Reference (Verbatim)
-file_path = "for github stats_2.xls"
+# 1. File Upload or Default File
+st.sidebar.header("Data Source")
+uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
+
+# Use the uploaded file if provided, otherwise default to the hardcoded name
+file_path = uploaded_file if uploaded_file else "for github stats_2.xls"
 
 try:
     # 2. Read the Excel File
     xls = pd.ExcelFile(file_path)
     
-    st.sidebar.header("Navigation")
-    st.sidebar.info(f"Loaded {len(xls.sheet_names)} sheets from '{file_path}'.")
+    st.sidebar.info(f"Loaded {len(xls.sheet_names)} sheets successfully.")
     
     # 3. Iterate through all sheets dynamically
     for sheet in xls.sheet_names:
@@ -110,5 +114,7 @@ try:
             else:
                 st.dataframe(df, use_container_width=True, hide_index=True)
 
+except FileNotFoundError:
+    st.error(f"Could not find the file `{file_path if isinstance(file_path, str) else 'uploaded file'}`. Please use the sidebar to manually upload the file!")
 except Exception as e:
-    st.error(f"Error loading data from '{file_path}'. Please ensure the file is in the same directory and formatted correctly. Details: {e}")
+    st.error(f"An error occurred while processing the data: {e}")
