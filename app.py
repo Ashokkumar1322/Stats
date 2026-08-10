@@ -10,8 +10,8 @@ st.write("Expand any section below to view and filter the data.")
 st.sidebar.header("Data Source")
 uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
 
-# Use the uploaded file if provided, otherwise default to the hardcoded name
-file_path = uploaded_file if uploaded_file else "for github stats_2.xls"
+# FIXED: Use the correct file name here
+file_path = uploaded_file if uploaded_file else "for github stats.xls"
 
 try:
     # 2. Read the Excel File
