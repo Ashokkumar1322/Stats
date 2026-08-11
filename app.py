@@ -1,6 +1,25 @@
 import streamlit as st
 import pandas as pd
 
+# --- NEW: SUPABASE & IMAGE IMPORTS ---
+from supabase import create_client
+import io
+import datetime
+import matplotlib.pyplot as plt
+
+# --- NEW: SUPABASE CONNECTION ---
+@st.cache_resource
+def init_connection():
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_KEY"]
+    return create_client(url, key)
+
+# Try to connect, but don't break the app if secrets aren't set up yet
+try:
+    supabase = init_connection()
+except Exception:
+    supabase = None
+
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Complete Premium Dashboard")
 
@@ -113,3 +132,40 @@ except FileNotFoundError:
     st.error("Could not find 'for github stats.xls'. Please use the sidebar to upload the file manually.")
 except Exception as e:
     st.error(f"An error occurred: {e}")
+
+
+# --- NEW: GENERATE FIGURE & UPLOAD TO SUPABASE ---
+st.divider()
+st.header("📈 Monthly Stats Figure")
+
+# (Placeholder Figure - Replace this block later with your actual charting code)
+fig, ax = plt.subplots(figsize=(6, 3))
+ax.plot(["Jan", "Feb", "Mar"], [100, 250, 200], marker="o", color="green")
+ax.set_title("Sample Monthly Performance")
+st.pyplot(fig)
+
+# Supabase Upload Button
+if supabase:
+    if st.button("Save this month's stats to Supabase"):
+        
+        # Convert the figure 'fig' to bytes
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png")
+        buf.seek(0)
+        
+        # Create a unique filename based on the current date
+        current_month = datetime.datetime.now().strftime("%Y_%m")
+        file_name = f"stats_{current_month}.png"
+        
+        try:
+            # Upload the file directly to your 'github-stats' bucket
+            response = supabase.storage.from_("github-stats").upload(
+                file=buf.getvalue(),
+                path=file_name,
+                file_options={"content-type": "image/png"}
+            )
+            st.success(f"Successfully saved '{file_name}' to Supabase!")
+        except Exception as e:
+            st.error(f"Error saving file to Supabase: {e}")
+else:
+    st.warning("⚠️ Supabase is not connected. Please add your Secrets in the Streamlit Dashboard to enable uploading.")
