@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 # --- SUPABASE CONNECTION ---
 @st.cache_resource
 def init_connection():
+    # These secrets must be added to your Streamlit Community Cloud dashboard!
     url = st.secrets["SUPABASE_URL"]
     key = st.secrets["SUPABASE_KEY"]
     return create_client(url, key)
@@ -21,6 +22,17 @@ except Exception:
 
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Complete Premium Dashboard")
+
+# --- MAP SHEETS TO SUPABASE TABLES ---
+# We linked '25 26' to your new table. Fill in the rest as you create them in Supabase.
+TABLE_MAPPING = {
+    '25 26': 'premium-comparison',
+    '26 27': '', 
+    '25 26 26 27 For the month': '',
+    '25 26 26 27 Up to the month': '',
+    'Channel wise 25 26': '',
+    'Channel wise 26 27': ''
+}
 
 # 1. File Upload or Default File
 st.sidebar.header("Data Source")
@@ -37,10 +49,8 @@ try:
     # 3. Iterate through all sheets
     for sheet in xls.sheet_names:
         
-        # FIX #1 & #2: Read data without aggressively dropping empty future months
+        # Read data and keep empty future months
         df = pd.read_excel(xls, sheet_name=sheet, header=1)
-        
-        # Drop columns that are completely empty AND unnamed (keeps empty future months)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
         
         # Clean datetime column headers (Months/Years)
@@ -53,6 +63,9 @@ try:
         df.columns = new_cols
 
         st.divider()
+        
+        # Get the correct Supabase table name for this specific sheet
+        target_supabase_table = TABLE_MAPPING.get(sheet)
         
         with st.expander(f"📁 View Data & Filters for: {sheet}", expanded=True):
             
@@ -88,37 +101,33 @@ try:
                 
                 columns_to_show = [dept_col] + selected_months
                 
-                # FIX #3: Use data_editor for editing and horizontal scrolling
-                st.markdown("**Edit your data directly in the table below:**")
+                st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
+                
+                # Editable Table
                 edited_df = st.data_editor(
                     filtered_df[columns_to_show], 
-                    use_container_width=False, # Setting False forces horizontal scroll for many columns
+                    use_container_width=False, 
                     hide_index=True,
                     key=f"editor_{sheet}"
                 )
 
-                # Save / Export Edited Data
-                if st.button(f"💾 Save updates for {sheet}", key=f"save_btn_{sheet}"):
-                    # Provide a quick CSV download of the edited data
-                    csv = edited_df.to_csv(index=False)
-                    st.download_button(
-                        label="Download Updated CSV", 
-                        data=csv, 
-                        file_name=f"{sheet}_updated.csv", 
-                        mime="text/csv", 
-                        key=f"dl_{sheet}"
-                    )
-                    
-                    # Supabase Database Save Logic (Requires a table setup)
-                    if supabase:
-                        st.info("💡 **To save to Supabase Database:** Ensure you have a table created. Then uncomment the Supabase insertion code in the script.")
-                        # --- Uncomment and update 'your_table_name' to sync to DB ---
-                        # records = edited_df.fillna("").to_dict(orient="records")
-                        # response = supabase.table("your_table_name").upsert(records).execute()
-                        # st.success("Saved to Supabase DB!")
+                # Save Data to Supabase
+                if st.button(f"💾 Save updates for {sheet} to Database", key=f"save_btn_{sheet}"):
+                    if supabase and target_supabase_table:
+                        try:
+                            records = edited_df.fillna("").to_dict(orient="records")
+                            response = supabase.table(target_supabase_table).upsert(records).execute()
+                            st.success(f"✅ Data successfully saved to the '{target_supabase_table}' table in Supabase!")
+                        except Exception as e:
+                            st.error(f"❌ Error saving to Supabase: {e}")
+                            st.info("💡 Hint: Make sure your Supabase table columns exactly match the Streamlit table headers, and that you have a Primary Key set.")
+                    elif not target_supabase_table:
+                        st.error(f"⚠️ No Supabase table mapped for the sheet '{sheet}'. Please update TABLE_MAPPING in the code.")
+                    else:
+                        st.error("⚠️ Supabase is not connected. Check your Streamlit secrets.")
 
             # -------------------------------------------------------------
-            # CHANNEL SHEETS FILTERS
+            # CHANNEL SHEETS FILTERS 
             # -------------------------------------------------------------
             elif sheet in ['Channel wise 25 26', 'Channel wise 26 27']:
                 st.markdown(f"### Filters for {sheet}")
@@ -145,13 +154,30 @@ try:
                 if search_posp and 'POSP' in filtered_df.columns:
                     filtered_df = filtered_df[filtered_df['POSP'].astype(str).str.contains(search_posp, case=False, na=False)]
                     
-                # Interactive Editor for Channels
+                st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
+                
+                # Editable Table
                 edited_channel_df = st.data_editor(
                     filtered_df, 
                     use_container_width=False, 
                     hide_index=True,
                     key=f"editor_ch_{sheet}"
                 )
+
+                # Save Data to Supabase
+                if st.button(f"💾 Save updates for {sheet} to Database", key=f"save_btn_ch_{sheet}"):
+                    if supabase and target_supabase_table:
+                        try:
+                            records = edited_channel_df.fillna("").to_dict(orient="records")
+                            response = supabase.table(target_supabase_table).upsert(records).execute()
+                            st.success(f"✅ Data successfully saved to the '{target_supabase_table}' table in Supabase!")
+                        except Exception as e:
+                            st.error(f"❌ Error saving to Supabase: {e}")
+                            st.info("💡 Hint: Make sure your Supabase table columns exactly match the Streamlit table headers, and that you have a Primary Key set.")
+                    elif not target_supabase_table:
+                        st.error(f"⚠️ No Supabase table mapped for the sheet '{sheet}'. Please update TABLE_MAPPING in the code.")
+                    else:
+                        st.error("⚠️ Supabase is not connected. Check your Streamlit secrets.")
 
 except FileNotFoundError:
     st.error("Could not find 'for github stats.xls'. Please use the sidebar to upload the file manually.")
