@@ -5,7 +5,6 @@ import pandas as pd
 from supabase import create_client
 import io
 import datetime
-import matplotlib.pyplot as plt
 
 # --- SUPABASE CONNECTION ---
 @st.cache_resource
@@ -24,7 +23,6 @@ st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Complete Premium Dashboard")
 
 # --- MAP SHEETS TO SUPABASE TABLES ---
-# Added 'ICR on Total Premium and EP' to the mapping.
 TABLE_MAPPING = {
     '25 26': 'premium-comparison',
     '26 27': '', 
@@ -32,7 +30,7 @@ TABLE_MAPPING = {
     '25 26 26 27 Up to the month': '',
     'Channel wise 25 26': '',
     'Channel wise 26 27': '',
-    'ICR on Total Premium and EP': '' 
+    'ICR on Total Premium and EP': ''
 }
 
 # 1. File Upload or Default File
@@ -53,6 +51,9 @@ try:
         # Read data and keep empty future months
         df = pd.read_excel(xls, sheet_name=sheet, header=1)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
+        
+        # Round all numerical columns to 2 decimal places
+        df = df.round(2)
         
         # Clean datetime column headers (Months/Years)
         new_cols = []
@@ -104,10 +105,10 @@ try:
                 
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table with scrolling enabled
+                # Editable Table - Container width set to False to prevent over-stretching
                 edited_df = st.data_editor(
                     filtered_df[columns_to_show], 
-                    use_container_width=True, 
+                    use_container_width=False, 
                     hide_index=True,
                     key=f"editor_{sheet}"
                 )
@@ -157,10 +158,10 @@ try:
                     
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table with scrolling enabled
+                # Editable Table - Container width set to False to prevent over-stretching
                 edited_channel_df = st.data_editor(
                     filtered_df, 
-                    use_container_width=True, 
+                    use_container_width=False, 
                     hide_index=True,
                     key=f"editor_ch_{sheet}"
                 )
@@ -184,33 +185,3 @@ except FileNotFoundError:
     st.error("Could not find 'for github stats.xls'. Please use the sidebar to upload the file manually.")
 except Exception as e:
     st.error(f"An error occurred: {e}")
-
-# --- GENERATE FIGURE & UPLOAD TO SUPABASE ---
-st.divider()
-st.header("📈 Monthly Stats Figure")
-
-fig, ax = plt.subplots(figsize=(6, 3))
-ax.plot(["Jan", "Feb", "Mar"], [100, 250, 200], marker="o", color="green")
-ax.set_title("Sample Monthly Performance")
-st.pyplot(fig)
-
-if supabase:
-    if st.button("Save this month's stats to Supabase"):
-        buf = io.BytesIO()
-        fig.savefig(buf, format="png")
-        buf.seek(0)
-        
-        current_month = datetime.datetime.now().strftime("%Y_%m")
-        file_name = f"stats_{current_month}.png"
-        
-        try:
-            response = supabase.storage.from_("github-stats").upload(
-                file=buf.getvalue(),
-                path=file_name,
-                file_options={"content-type": "image/png"}
-            )
-            st.success(f"Successfully saved '{file_name}' to Supabase!")
-        except Exception as e:
-            st.error(f"Error saving file to Supabase: {e}")
-else:
-    st.warning("⚠️ Supabase is not connected. Please add your Secrets in the Streamlit Dashboard to enable uploading.")
