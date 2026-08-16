@@ -52,9 +52,6 @@ try:
         df = pd.read_excel(xls, sheet_name=sheet, header=1)
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
         
-        # Round all numerical columns to 2 decimal places
-        df = df.round(2)
-        
         # Clean datetime column headers (Months/Years)
         new_cols = []
         for c in df.columns:
@@ -63,6 +60,14 @@ try:
             else:
                 new_cols.append(str(c).strip())
         df.columns = new_cols
+        
+        # Force ICR columns to numeric and round to 2 decimals
+        for col in df.columns:
+            if 'ICR' in str(col).upper():
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+        
+        # Broadly round all numerical columns to 2 decimal places in the dataframe
+        df = df.round(2)
 
         st.divider()
         
@@ -71,6 +76,12 @@ try:
         
         with st.expander(f"📁 View Data & Filters for: {sheet}", expanded=True):
             
+            # --- CREATE COLUMN CONFIG TO FORCE STREAMLIT TO SHOW 2 DECIMALS ---
+            col_format_config = {}
+            for c in df.columns:
+                if 'ICR' in str(c).upper():
+                    col_format_config[c] = st.column_config.NumberColumn(format="%.2f")
+
             # -------------------------------------------------------------
             # DEPARTMENT & METRICS SHEETS FILTERS
             # -------------------------------------------------------------
@@ -105,11 +116,12 @@ try:
                 
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table - Container width set to False to prevent over-stretching
+                # Editable Table
                 edited_df = st.data_editor(
                     filtered_df[columns_to_show], 
                     use_container_width=False, 
                     hide_index=True,
+                    column_config=col_format_config,  # <--- APPLIED THE NEW FORMATTING HERE
                     key=f"editor_{sheet}"
                 )
 
@@ -158,11 +170,12 @@ try:
                     
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table - Container width set to False to prevent over-stretching
+                # Editable Table
                 edited_channel_df = st.data_editor(
                     filtered_df, 
                     use_container_width=False, 
                     hide_index=True,
+                    column_config=col_format_config,  # <--- APPLIED THE NEW FORMATTING HERE
                     key=f"editor_ch_{sheet}"
                 )
 
