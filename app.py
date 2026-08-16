@@ -24,14 +24,15 @@ st.set_page_config(page_title="Premium Figures Dashboard", layout="wide")
 st.title("📊 Complete Premium Dashboard")
 
 # --- MAP SHEETS TO SUPABASE TABLES ---
-# We linked '25 26' to your new table. Fill in the rest as you create them in Supabase.
+# Added 'ICR on Total Premium and EP' to the mapping.
 TABLE_MAPPING = {
     '25 26': 'premium-comparison',
     '26 27': '', 
     '25 26 26 27 For the month': '',
     '25 26 26 27 Up to the month': '',
     'Channel wise 25 26': '',
-    'Channel wise 26 27': ''
+    'Channel wise 26 27': '',
+    'ICR on Total Premium and EP': '' 
 }
 
 # 1. File Upload or Default File
@@ -70,9 +71,9 @@ try:
         with st.expander(f"📁 View Data & Filters for: {sheet}", expanded=True):
             
             # -------------------------------------------------------------
-            # DEPARTMENT SHEETS FILTERS
+            # DEPARTMENT & METRICS SHEETS FILTERS
             # -------------------------------------------------------------
-            if sheet in ['25 26', '26 27', '25 26 26 27 For the month', '25 26 26 27 Up to the month']:
+            if sheet in ['25 26', '26 27', '25 26 26 27 For the month', '25 26 26 27 Up to the month', 'ICR on Total Premium and EP']:
                 st.markdown(f"### Filters for {sheet}")
                 
                 dept_col = df.columns[0] 
@@ -86,11 +87,11 @@ try:
                         key=f"dept_{sheet}"
                     )
                 with col2:
-                    available_months = df.columns[1:].tolist()
-                    selected_months = st.multiselect(
-                        "Filter by Month and Year (Select headers to show):", 
-                        options=available_months, 
-                        default=available_months, 
+                    available_columns = df.columns[1:].tolist()
+                    selected_columns = st.multiselect(
+                        "Select columns/headers to show:", 
+                        options=available_columns, 
+                        default=available_columns, 
                         key=f"cols_{sheet}"
                     )
                 
@@ -99,14 +100,14 @@ try:
                 if selected_dept != "All":
                     filtered_df = filtered_df[filtered_df[dept_col] == selected_dept]
                 
-                columns_to_show = [dept_col] + selected_months
+                columns_to_show = [dept_col] + selected_columns
                 
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table
+                # Editable Table with scrolling enabled
                 edited_df = st.data_editor(
                     filtered_df[columns_to_show], 
-                    use_container_width=False, 
+                    use_container_width=True, 
                     hide_index=True,
                     key=f"editor_{sheet}"
                 )
@@ -156,10 +157,10 @@ try:
                     
                 st.markdown("**📝 Instructions: Double-click any cell below to edit it.**")
                 
-                # Editable Table
+                # Editable Table with scrolling enabled
                 edited_channel_df = st.data_editor(
                     filtered_df, 
-                    use_container_width=False, 
+                    use_container_width=True, 
                     hide_index=True,
                     key=f"editor_ch_{sheet}"
                 )
@@ -183,7 +184,6 @@ except FileNotFoundError:
     st.error("Could not find 'for github stats.xls'. Please use the sidebar to upload the file manually.")
 except Exception as e:
     st.error(f"An error occurred: {e}")
-
 
 # --- GENERATE FIGURE & UPLOAD TO SUPABASE ---
 st.divider()
