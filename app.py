@@ -21,6 +21,8 @@ try:
         
         # Read data and keep empty future months
         df = pd.read_excel(xls, sheet_name=sheet, header=1)
+        
+        # Drop 'Unnamed' columns ONLY if they are completely empty
         df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
         
         # Clean datetime column headers (Months/Years)
@@ -82,7 +84,7 @@ try:
                 
                 columns_to_show = [dept_col] + selected_columns
                 
-                # Read-Only Table (Changed from data_editor to dataframe)
+                # Read-Only Table 
                 st.dataframe(
                     filtered_df[columns_to_show], 
                     use_container_width=False, 
@@ -118,9 +120,43 @@ try:
                 if search_posp and 'POSP' in filtered_df.columns:
                     filtered_df = filtered_df[filtered_df['POSP'].astype(str).str.contains(search_posp, case=False, na=False)]
                     
-                # Read-Only Table (Changed from data_editor to dataframe)
                 st.dataframe(
                     filtered_df, 
+                    use_container_width=False, 
+                    hide_index=True,
+                    column_config=col_format_config
+                )
+
+            # -------------------------------------------------------------
+            # NEW: MISP SHEET FILTER
+            # -------------------------------------------------------------
+            elif sheet == 'MISP':
+                st.markdown(f"### Filters for {sheet}")
+                search_misp = ""
+                
+                if "MISP's NAME" in df.columns:
+                    search_misp = st.text_input("Search by MISP NAME:", key=f"misp_{sheet}")
+                
+                # Apply Filter
+                filtered_df = df.copy()
+                if search_misp and "MISP's NAME" in filtered_df.columns:
+                    # Filter rows where MISP's NAME matches the search text (case-insensitive)
+                    filtered_df = filtered_df[filtered_df["MISP's NAME"].astype(str).str.contains(search_misp, case=False, na=False)]
+                    
+                st.dataframe(
+                    filtered_df, 
+                    use_container_width=False, 
+                    hide_index=True,
+                    column_config=col_format_config
+                )
+
+            # -------------------------------------------------------------
+            # FALLBACK FOR ANY OTHER SHEETS
+            # -------------------------------------------------------------
+            else:
+                st.markdown(f"### Data for {sheet}")
+                st.dataframe(
+                    df, 
                     use_container_width=False, 
                     hide_index=True,
                     column_config=col_format_config
