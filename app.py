@@ -1,24 +1,35 @@
 import streamlit as st
 import pandas as pd
+import os
 
 # Page Configuration
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide", page_icon="📊")
 st.title("📊 Complete Premium Figures Dashboard")
 
-# 1. Sidebar Data Source Selection
+# 1. Sidebar Data Source & Cache Control
 st.sidebar.header("Data Source")
 uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
 
 file_path = uploaded_file if uploaded_file else "for github stats.xls"
 
+# Get file modification timestamp (to break cache when local file is updated)
+file_mtime = None
+if isinstance(file_path, str) and os.path.exists(file_path):
+    file_mtime = os.path.getmtime(file_path)
+
+# Sidebar Clear Cache Button
+if st.sidebar.button("🔄 Refresh Data / Clear Cache"):
+    st.cache_data.clear()
+    st.rerun()
+
 try:
-    # 2. Read the Excel File
+    # 2. Read Excel File
     xls = pd.ExcelFile(file_path)
     st.sidebar.success(f"Successfully loaded {len(xls.sheet_names)} sheets.")
 
-    # 3. Cache Data Processing for High Performance
-    @st.cache_data
-    def load_and_clean_sheet(file, sheet_name):
+    # 3. Cache Data Processing (with mtime invalidation)
+    @st.cache_data(show_spinner=False)
+    def load_and_clean_sheet(file, sheet_name, mtime=None):
         df = pd.read_excel(file, sheet_name=sheet_name, header=1)
         
         # Drop completely empty 'Unnamed' columns
@@ -33,28 +44,47 @@ try:
                 new_cols.append(str(c).strip())
         df.columns = new_cols
         
-        # Force ICR & numeric columns to float
+        # Force numeric conversion for all numerical/month/ICR columns
         for col in df.columns:
-            if any(k in str(col).upper() for k in ['ICR', 'PREMIUM', 'TOTAL', 'ACCRETION', 'SHARE']):
+            # Convert all non-text columns to numeric
+            if col not in [df.columns[0], 'Party Code', 'Party Name', 'AGENT', 'BROKER', 'POSP', "MISP's NAME", 'DEALER CODE']:
                 df[col] = pd.to_numeric(df[col], errors='coerce')
         
         return df.round(2)
 
-    # 4. Global Executive Metrics (Top Cards)
+    # 4. Dynamic Global Executive Metrics (Top Cards)
     if '26 27' in xls.sheet_names:
-        df_kpi = load_and_clean_sheet(file_path, '26 27')
-        total_row = df_kpi[df_kpi['Dept'].astype(str).str.contains('Sum for all', case=False, na=False)]
-        total_prem = total_row['TOTAL'].values[0] if not total_row.empty and 'TOTAL' in total_row.columns else 0
+        df_kpi = load_and_clean_sheet(file_path, '26 27', mtime=file_mtime)
         
+        # Exclude summary rows for LOB calculations
+        dept_col = df_kpi.columns[0]
+        data_rows = df_kpi[~df_kpi[dept_col].astype(str).str.contains('Sum for all|Total', case=False, na=False)]
+        total_row = df_kpi[df_kpi[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
+        
+        total_prem = total_row['TOTAL'].values[0] if not total_row.empty and 'TOTAL' in total_row.columns else data_rows['TOTAL'].sum()
+        
+        # Calculate Top LOB dynamically
+        top_lob_name = "N/A"
+        if not data_rows.empty and 'TOTAL' in data_rows.columns:
+            top_row = data_rows.sort_values(by='TOTAL', ascending=False).iloc[0]
+            top_lob_name = str(top_row[dept_col])
+
+        # Calculate Retail Health Share dynamically
+        health_share_str = "N/A"
+        health_row = data_rows[data_rows[dept_col].astype(str).str.contains('Health Insurance - Retail|061', case=False, na=False)]
+        if not health_row.empty and 'Dept share %' in health_row.columns:
+            health_share_val = health_row['Dept share %'].values[0]
+            health_share_str = f"{health_share_val:.2f}%"
+
         kpi1, kpi2, kpi3, kpi4 = st.columns(4)
         with kpi1:
             st.metric("Total Premium (FY 26-27)", f"₹ {total_prem:,.2f}" if total_prem else "N/A")
         with kpi2:
             st.metric("Total Sheets Loaded", f"{len(xls.sheet_names)}")
         with kpi3:
-            st.metric("Top LOB", "038 - TP CV Non Pool")
+            st.metric("Top LOB", top_lob_name)
         with kpi4:
-            st.metric("Retail Health Share", "19.55%")
+            st.metric("Retail Health Share", health_share_str)
 
     st.markdown("---")
 
@@ -63,7 +93,7 @@ try:
 
     for tab, sheet in zip(sheet_tabs, xls.sheet_names):
         with tab:
-            df = load_and_clean_sheet(file_path, sheet)
+            df = load_and_clean_sheet(file_path, sheet, mtime=file_mtime)
             
             # Auto-generate column formatting config
             col_format_config = {}
@@ -96,7 +126,7 @@ try:
                         "Select Columns to Display:", 
                         options=available_columns, 
                         default=available_columns, 
-                        key=f"cols_{sheet}"
+                        key=f"cols_{sheet}_{len(available_columns)}"  # Dynamic key updates on new columns
                     )
                 
                 # Apply Filters
@@ -116,7 +146,6 @@ try:
                 col1, col2, col3 = st.columns(3)
                 search_agent, search_broker, search_posp = "", "", ""
                 
-                # Dynamic check for AGENT vs Party Name
                 agent_col = 'AGENT' if 'AGENT' in df.columns else ('Party Name' if 'Party Name' in df.columns else None)
                 
                 with col1:
