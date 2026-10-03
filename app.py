@@ -58,7 +58,7 @@ try:
     
     st.sidebar.success(f"Successfully loaded {len(sheet_names)} sheets!")
 
-    # 3. Sidebar Navigation Selector (This now controls what renders on the screen)
+    # 3. Sidebar Navigation Selector
     st.sidebar.markdown("---")
     st.sidebar.header("📑 View Sheets")
     selected_sheet = st.sidebar.radio("Select the sheet you want to view:", sheet_names)
@@ -71,20 +71,20 @@ try:
     icr_tp_val = "N/A"
     icr_ep_val = "N/A"
 
-    # Extract Total Premium
+    # Extract Total Premium (Formatted WITHOUT decimals)
     if '26 27' in all_sheets:
         df_kpi = all_sheets['26 27']
         dept_col = df_kpi.columns[0]
         total_row = df_kpi[df_kpi[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
         if not total_row.empty and 'TOTAL' in total_row.columns:
-            total_prem_val = f"₹ {total_row['TOTAL'].values[0]:,.2f}"
+            total_prem_val = f"₹ {int(round(total_row['TOTAL'].values[0])):,-d}"
 
     # Extract Accretion
     if '25 26 26 27 Up to the month' in all_sheets:
         df_upto = all_sheets['25 26 26 27 Up to the month']
         accretion_cols = [c for c in df_upto.columns if 'ACCRETION' in str(c).upper()]
         if accretion_cols:
-            latest_accretion_col = accretion_cols[-1] # Gets the latest/last accretion column
+            latest_accretion_col = accretion_cols[-1]
             accretion_label = latest_accretion_col
             dept_col = df_upto.columns[0]
             total_row = df_upto[df_upto[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
@@ -94,7 +94,7 @@ try:
     # Extract ICR Data
     if 'ICR on Total Premium and EP' in all_sheets:
         df_icr = all_sheets['ICR on Total Premium and EP']
-        lob_col = df_icr.columns[0]  # First actual column with names
+        lob_col = df_icr.columns[0]
         grand_total_row = df_icr[df_icr[lob_col].astype(str).str.contains('Grand Total', case=False, na=False)]
         
         if not grand_total_row.empty:
