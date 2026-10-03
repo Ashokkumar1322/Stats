@@ -23,7 +23,7 @@ if st.sidebar.button("🔄 Refresh Data / Clear Cache"):
     st.rerun()
 
 try:
-    # 2. READ ALL SHEETS AT ONCE 
+    # 2. READ ALL SHEETS AT ONCE
     @st.cache_data(show_spinner=False)
     def load_all_excel_sheets(file, header_row=1, mtime=None):
         xls_dict = pd.read_excel(file, sheet_name=None, header=header_row)
@@ -64,7 +64,6 @@ try:
     selected_sheet = st.sidebar.radio("Select the sheet you want to view:", sheet_names)
 
     # 4. Global Executive Metrics (Top Cards)
-    # Default metric placeholders
     total_prem_val = "N/A"
     accretion_label = "Accretion"
     accretion_val = "N/A"
@@ -77,7 +76,9 @@ try:
         dept_col = df_kpi.columns[0]
         total_row = df_kpi[df_kpi[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
         if not total_row.empty and 'TOTAL' in total_row.columns:
-            total_prem_val = f"₹ {int(round(total_row['TOTAL'].values[0])):,-d}"
+            val_total = total_row['TOTAL'].values[0]
+            if pd.notna(val_total):
+                total_prem_val = f"₹ {int(round(val_total)):,}"
 
     # Extract Accretion
     if '25 26 26 27 Up to the month' in all_sheets:
@@ -89,7 +90,9 @@ try:
             dept_col = df_upto.columns[0]
             total_row = df_upto[df_upto[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
             if not total_row.empty:
-                accretion_val = f"{total_row[latest_accretion_col].values[0]:.2f}%"
+                val_acc = total_row[latest_accretion_col].values[0]
+                if pd.notna(val_acc):
+                    accretion_val = f"{val_acc:.2f}%"
 
     # Extract ICR Data
     if 'ICR on Total Premium and EP' in all_sheets:
@@ -99,9 +102,13 @@ try:
         
         if not grand_total_row.empty:
             if 'ICR On Total Premium' in grand_total_row.columns:
-                icr_tp_val = f"{grand_total_row['ICR On Total Premium'].values[0]:.2f}%"
+                val_tp = grand_total_row['ICR On Total Premium'].values[0]
+                if pd.notna(val_tp):
+                    icr_tp_val = f"{val_tp:.2f}%"
             if 'ICR On Earned Premium' in grand_total_row.columns:
-                icr_ep_val = f"{grand_total_row['ICR On Earned Premium'].values[0]:.2f}%"
+                val_ep = grand_total_row['ICR On Earned Premium'].values[0]
+                if pd.notna(val_ep):
+                    icr_ep_val = f"{val_ep:.2f}%"
 
     # Render top metrics
     k1, k2, k3, k4 = st.columns(4)
