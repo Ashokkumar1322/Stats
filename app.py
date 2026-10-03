@@ -6,13 +6,13 @@ import os
 st.set_page_config(page_title="Premium Figures Dashboard", layout="wide", page_icon="📊")
 st.title("📊 Complete Premium Figures Dashboard")
 
-# 1. Sidebar Data Source & Cache Control
-st.sidebar.header("Data Source")
+# 1. Sidebar Data Source Selection
+st.sidebar.header("📁 Data Source")
 uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
 
 file_path = uploaded_file if uploaded_file else "for github stats.xls"
 
-# Get file modification timestamp (to break cache when local file is updated)
+# Get modification timestamp for local file caching
 file_mtime = None
 if isinstance(file_path, str) and os.path.exists(file_path):
     file_mtime = os.path.getmtime(file_path)
@@ -23,79 +23,90 @@ if st.sidebar.button("🔄 Refresh Data / Clear Cache"):
     st.rerun()
 
 try:
-    # 2. Read Excel File
-    xls = pd.ExcelFile(file_path)
-    st.sidebar.success(f"Successfully loaded {len(xls.sheet_names)} sheets.")
-
-    # 3. Cache Data Processing (with mtime invalidation)
+    # 2. READ ALL SHEETS AT ONCE (Fixes single-sheet bug)
     @st.cache_data(show_spinner=False)
-    def load_and_clean_sheet(file, sheet_name, mtime=None):
-        df = pd.read_excel(file, sheet_name=sheet_name, header=1)
+    def load_all_excel_sheets(file, header_row=1, mtime=None):
+        # Setting sheet_name=None reads ALL sheets into a dict of DataFrames
+        xls_dict = pd.read_excel(file, sheet_name=None, header=header_row)
+        cleaned_dict = {}
         
-        # Drop completely empty 'Unnamed' columns
-        df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
-        
-        # Clean header names (Datetime & whitespace)
-        new_cols = []
-        for c in df.columns:
-            if isinstance(c, pd.Timestamp) or hasattr(c, 'strftime'):
-                new_cols.append(pd.to_datetime(c).strftime('%b-%y').upper())
-            else:
-                new_cols.append(str(c).strip())
-        df.columns = new_cols
-        
-        # Force numeric conversion for all numerical/month/ICR columns
-        for col in df.columns:
-            # Convert all non-text columns to numeric
-            if col not in [df.columns[0], 'Party Code', 'Party Name', 'AGENT', 'BROKER', 'POSP', "MISP's NAME", 'DEALER CODE']:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        
-        return df.round(2)
+        for sheet_name, df in xls_dict.items():
+            df = df.copy()
+            # Drop completely empty 'Unnamed' columns
+            df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
+            
+            # Clean header names (Datetime & whitespace)
+            new_cols = []
+            for c in df.columns:
+                if isinstance(c, pd.Timestamp) or hasattr(c, 'strftime'):
+                    new_cols.append(pd.to_datetime(c).strftime('%b-%y').upper())
+                else:
+                    new_cols.append(str(c).strip())
+            df.columns = new_cols
+            
+            # Force numeric conversion for data columns
+            for col in df.columns:
+                if col not in [df.columns[0], 'Party Code', 'Party Name', 'AGENT', 'BROKER', 'POSP', "MISP's NAME", 'DEALER CODE']:
+                    df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            cleaned_dict[sheet_name] = df.round(2)
+            
+        return cleaned_dict
 
-    # 4. Dynamic Global Executive Metrics (Top Cards)
-    if '26 27' in xls.sheet_names:
-        df_kpi = load_and_clean_sheet(file_path, '26 27', mtime=file_mtime)
-        
-        # Exclude summary rows for LOB calculations
+    # Load all sheets dictionary
+    all_sheets = load_all_excel_sheets(file_path, header_row=1, mtime=file_mtime)
+    sheet_names = list(all_sheets.keys())
+    
+    st.sidebar.success(f"Successfully loaded {len(sheet_names)} sheets!")
+
+    # 3. Sidebar Navigation Selector
+    st.sidebar.markdown("---")
+    st.sidebar.header("📑 Select Sheet")
+    selected_sheet_sidebar = st.sidebar.radio("Jump to Sheet:", sheet_names)
+
+    # 4. Executive Metrics Header (Top Cards)
+    if '26 27' in all_sheets:
+        df_kpi = all_sheets['26 27']
         dept_col = df_kpi.columns[0]
+        
         data_rows = df_kpi[~df_kpi[dept_col].astype(str).str.contains('Sum for all|Total', case=False, na=False)]
         total_row = df_kpi[df_kpi[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
         
         total_prem = total_row['TOTAL'].values[0] if not total_row.empty and 'TOTAL' in total_row.columns else data_rows['TOTAL'].sum()
         
-        # Calculate Top LOB dynamically
         top_lob_name = "N/A"
         if not data_rows.empty and 'TOTAL' in data_rows.columns:
             top_row = data_rows.sort_values(by='TOTAL', ascending=False).iloc[0]
             top_lob_name = str(top_row[dept_col])
 
-        # Calculate Retail Health Share dynamically
         health_share_str = "N/A"
         health_row = data_rows[data_rows[dept_col].astype(str).str.contains('Health Insurance - Retail|061', case=False, na=False)]
         if not health_row.empty and 'Dept share %' in health_row.columns:
-            health_share_val = health_row['Dept share %'].values[0]
-            health_share_str = f"{health_share_val:.2f}%"
+            health_share_str = f"{health_row['Dept share %'].values[0]:.2f}%"
 
-        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
-        with kpi1:
+        k1, k2, k3, k4 = st.columns(4)
+        with k1:
             st.metric("Total Premium (FY 26-27)", f"₹ {total_prem:,.2f}" if total_prem else "N/A")
-        with kpi2:
-            st.metric("Total Sheets Loaded", f"{len(xls.sheet_names)}")
-        with kpi3:
+        with k2:
+            st.metric("Total Sheets Available", f"{len(sheet_names)}")
+        with k3:
             st.metric("Top LOB", top_lob_name)
-        with kpi4:
+        with k4:
             st.metric("Retail Health Share", health_share_str)
 
     st.markdown("---")
 
-    # 5. Tabbed Navigation Interface
-    sheet_tabs = st.tabs([f"📄 {sheet}" for sheet in xls.sheet_names])
+    # 5. Tabbed Navigation View
+    sheet_tabs = st.tabs([f"📄 {s}" for s in sheet_names])
+    
+    # Map selected sidebar sheet to active tab
+    active_index = sheet_names.index(selected_sheet_sidebar) if selected_sheet_sidebar in sheet_names else 0
 
-    for tab, sheet in zip(sheet_tabs, xls.sheet_names):
+    for i, (tab, sheet) in enumerate(zip(sheet_tabs, sheet_names)):
         with tab:
-            df = load_and_clean_sheet(file_path, sheet, mtime=file_mtime)
+            df = all_sheets[sheet]
             
-            # Auto-generate column formatting config
+            # Configure formatting for numbers, currency, and percentages
             col_format_config = {}
             for c in df.columns:
                 c_upper = str(c).upper()
@@ -126,10 +137,9 @@ try:
                         "Select Columns to Display:", 
                         options=available_columns, 
                         default=available_columns, 
-                        key=f"cols_{sheet}_{len(available_columns)}"  # Dynamic key updates on new columns
+                        key=f"cols_{sheet}_{len(available_columns)}"
                     )
                 
-                # Apply Filters
                 filtered_df = df.copy()
                 if selected_dept != "All":
                     filtered_df = filtered_df[filtered_df[dept_col] == selected_dept]
@@ -158,7 +168,6 @@ try:
                     if 'POSP' in df.columns:
                         search_posp = st.text_input("Search by POSP:", key=f"posp_{sheet}")
                 
-                # Apply Filters
                 filtered_df = df.copy()
                 if search_agent and agent_col:
                     filtered_df = filtered_df[filtered_df[agent_col].astype(str).str.contains(search_agent, case=False, na=False)]
