@@ -1,232 +1,354 @@
-import streamlit as st
-import pandas as pd
 import os
+from io import BytesIO
 
-# Page Configuration
-st.set_page_config(page_title="Premium Figures Dashboard", layout="wide", page_icon="📊")
+import pandas as pd
+import streamlit as st
+
+# -----------------------------------------------------------------------------
+# PAGE CONFIGURATION
+# -----------------------------------------------------------------------------
+st.set_page_config(
+    page_title="Premium Figures Dashboard",
+    layout="wide",
+    page_icon="📊",
+)
 st.title("📊 Complete Premium Figures Dashboard")
 
-# 1. Sidebar Data Source & Cache Control
+# -----------------------------------------------------------------------------
+# DATA SOURCE
+# -----------------------------------------------------------------------------
 st.sidebar.header("📁 Data Source")
-uploaded_file = st.sidebar.file_uploader("Upload your Excel File", type=['xls', 'xlsx'])
+uploaded_file = st.sidebar.file_uploader(
+    "Upload your Excel file", type=["xls", "xlsx"]
+)
 
-file_path = uploaded_file if uploaded_file else "for github stats.xls"
+DEFAULT_FILE = "for github stats.xls"
+file_source = uploaded_file if uploaded_file is not None else DEFAULT_FILE
 
-# Get modification timestamp for local file caching
-file_mtime = None
-if isinstance(file_path, str) and os.path.exists(file_path):
-    file_mtime = os.path.getmtime(file_path)
+if isinstance(file_source, str) and not os.path.exists(file_source):
+    st.error(
+        f"Could not find '{DEFAULT_FILE}'. Upload the Excel file using the sidebar."
+    )
+    st.stop()
 
-# Sidebar Clear Cache Button
 if st.sidebar.button("🔄 Refresh Data / Clear Cache"):
     st.cache_data.clear()
     st.rerun()
 
-try:
-    # 2. READ ALL SHEETS AT ONCE
-    @st.cache_data(show_spinner=False)
-    def load_all_excel_sheets(file, header_row=1, mtime=None):
-        xls_dict = pd.read_excel(file, sheet_name=None, header=header_row)
-        cleaned_dict = {}
-        
-        for sheet_name, df in xls_dict.items():
-            df = df.copy()
-            # Drop completely empty 'Unnamed' columns
-            df = df.loc[:, ~df.columns.astype(str).str.contains('^Unnamed') | df.notna().any()]
-            
-            # Clean header names (Datetime & whitespace)
-            new_cols = []
-            for c in df.columns:
-                if isinstance(c, pd.Timestamp) or hasattr(c, 'strftime'):
-                    new_cols.append(pd.to_datetime(c).strftime('%b-%y').upper())
-                else:
-                    new_cols.append(str(c).strip())
-            df.columns = new_cols
-            
-            # Force numeric conversion for data columns
-            for col in df.columns:
-                if col not in [df.columns[0], 'Party Code', 'Party Name', 'AGENT', 'BROKER', 'POSP', "MISP's NAME", 'DEALER CODE', 'LOB Name']:
-                    df[col] = pd.to_numeric(df[col], errors='coerce')
-            
-            cleaned_dict[sheet_name] = df.round(2)
-            
-        return cleaned_dict
 
-    # Load all sheets dictionary
-    all_sheets = load_all_excel_sheets(file_path, header_row=1, mtime=file_mtime)
+def normalise_sheet_name(name):
+    """Remove accidental leading/trailing spaces from worksheet names."""
+    return str(name).strip()
+
+
+@st.cache_data(show_spinner="Loading Excel workbook…")
+def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
+    """Read every worksheet and clean its headers and data."""
+    extension = os.path.splitext(file_name.lower())[1]
+    engine = "xlrd" if extension == ".xls" else "openpyxl"
+
+    workbook = pd.ExcelFile(BytesIO(file_bytes), engine=engine)
+    cleaned_sheets = {}
+
+    for original_name in workbook.sheet_names:
+        sheet_name = normalise_sheet_name(original_name)
+        df = pd.read_excel(
+            workbook,
+            sheet_name=original_name,
+            header=1,
+        ).copy()
+
+        # Remove completely empty columns, including Excel's Unnamed columns.
+        df = df.dropna(axis=1, how="all")
+        df = df.loc[
+            :,
+            ~(
+                df.columns.astype(str).str.startswith("Unnamed")
+                & ~df.notna().any()
+            ),
+        ]
+
+        # Clean column names. Convert Excel date headers to APR-26 style.
+        new_columns = []
+        for column in df.columns:
+            if isinstance(column, (pd.Timestamp,)):
+                new_columns.append(column.strftime("%b-%y").upper())
+            else:
+                new_columns.append(str(column).strip())
+        df.columns = new_columns
+
+        # Keep the first column and known identification/text fields as text.
+        text_columns = {
+            "Party Code", "Party Name", "AGENT", "BROKER", "POSP",
+            "MISP's NAME", "DEALER CODE", "LOB Name", "Dept",
+            "Dept ", "Dept  FOR THE MONTH", "Dept   UPTO THE MONTH",
+            "Dept Code", "Sl no", "SL NO",
+        }
+        first_column = df.columns[0] if len(df.columns) else None
+
+        for column in df.columns:
+            if column == first_column or column in text_columns:
+                continue
+            # Numeric conversion is safe for figures and leaves text as NaN.
+            df[column] = pd.to_numeric(df[column], errors="coerce")
+
+        cleaned_sheets[sheet_name] = df.round(2)
+
+    return cleaned_sheets
+
+
+# Streamlit's uploader is read as bytes. Reading local files as bytes also
+# ensures that a changed workbook gets a different cache key.
+try:
+    if uploaded_file is not None:
+        file_bytes = uploaded_file.getvalue()
+        file_name = uploaded_file.name
+        file_mtime = None
+    else:
+        file_name = DEFAULT_FILE
+        file_mtime = os.path.getmtime(file_name)
+        with open(file_name, "rb") as excel_file:
+            file_bytes = excel_file.read()
+
+    all_sheets = load_all_excel_sheets(file_bytes, file_name, file_mtime)
     sheet_names = list(all_sheets.keys())
-    
+
+    if not sheet_names:
+        st.error("No worksheets were found in the Excel file.")
+        st.stop()
+
     st.sidebar.success(f"Successfully loaded {len(sheet_names)} sheets!")
 
-    # 3. Sidebar Navigation Selector
+    # -------------------------------------------------------------------------
+    # SHEET NAVIGATION
+    # -------------------------------------------------------------------------
     st.sidebar.markdown("---")
     st.sidebar.header("📑 View Sheets")
-    selected_sheet = st.sidebar.radio("Select the sheet you want to view:", sheet_names)
+    selected_sheet = st.sidebar.radio(
+        "Select the sheet you want to view:", sheet_names
+    )
 
-    # 4. Global Executive Metrics (Top Cards)
-    total_prem_val = "N/A"
+    # -------------------------------------------------------------------------
+    # KPI HELPERS - use sheet/column matching so minor renaming is manageable.
+    # -------------------------------------------------------------------------
+    def find_sheet(name_candidates):
+        for candidate in name_candidates:
+            candidate_clean = candidate.strip().casefold()
+            for actual_name in all_sheets:
+                if actual_name.strip().casefold() == candidate_clean:
+                    return all_sheets[actual_name]
+        return None
+
+    def find_total_row(df, terms):
+        if df is None or df.empty:
+            return None
+        first_col = df.columns[0]
+        values = df[first_col].astype(str)
+        for term in terms:
+            matched = df[values.str.contains(term, case=False, na=False)]
+            if not matched.empty:
+                return matched.iloc[0]
+        return None
+
+    total_premium_value = "N/A"
     accretion_label = "Accretion"
-    accretion_val = "N/A"
-    icr_tp_val = "N/A"
-    icr_ep_val = "N/A"
+    accretion_value = "N/A"
+    icr_total_value = "N/A"
+    icr_earned_value = "N/A"
 
-    # Extract Total Premium (Formatted WITHOUT decimals)
-    if '26 27' in all_sheets:
-        df_kpi = all_sheets['26 27']
-        dept_col = df_kpi.columns[0]
-        total_row = df_kpi[df_kpi[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
-        if not total_row.empty and 'TOTAL' in total_row.columns:
-            val_total = total_row['TOTAL'].values[0]
-            if pd.notna(val_total):
-                total_prem_val = f"₹ {int(round(val_total)):,}"
+    # Total premium: current workbook has this in sheet '26 27'.
+    df_current = find_sheet(["26 27"])
+    if df_current is not None and "TOTAL" in df_current.columns:
+        total_row = find_total_row(df_current, ["Sum for all"])
+        if total_row is not None and pd.notna(total_row["TOTAL"]):
+            total_premium_value = f"₹ {int(round(total_row['TOTAL'])):,}"
 
-    # Extract Accretion
-    if '25 26 26 27 Up to the month' in all_sheets:
-        df_upto = all_sheets['25 26 26 27 Up to the month']
-        accretion_cols = [c for c in df_upto.columns if 'ACCRETION' in str(c).upper()]
-        if accretion_cols:
-            latest_accretion_col = accretion_cols[-1]
-            accretion_label = latest_accretion_col
-            dept_col = df_upto.columns[0]
-            total_row = df_upto[df_upto[dept_col].astype(str).str.contains('Sum for all', case=False, na=False)]
-            if not total_row.empty:
-                val_acc = total_row[latest_accretion_col].values[0]
-                if pd.notna(val_acc):
-                    accretion_val = f"{val_acc:.2f}%"
+    # Latest cumulative accretion: find the last column containing ACCRETION.
+    df_upto = find_sheet(["25 26 26 27 Up to the month"])
+    if df_upto is not None:
+        accretion_columns = [
+            col for col in df_upto.columns
+            if "ACCRETION" in str(col).upper()
+        ]
+        if accretion_columns:
+            latest_column = accretion_columns[-1]
+            accretion_label = str(latest_column)
+            total_row = find_total_row(df_upto, ["Sum for all"])
+            if total_row is not None and pd.notna(total_row[latest_column]):
+                accretion_value = f"{total_row[latest_column]:.2f}%"
 
-    # Extract ICR Data
-    if 'ICR on Total Premium and EP' in all_sheets:
-        df_icr = all_sheets['ICR on Total Premium and EP']
-        lob_col = df_icr.columns[0]
-        grand_total_row = df_icr[df_icr[lob_col].astype(str).str.contains('Grand Total', case=False, na=False)]
-        
-        if not grand_total_row.empty:
-            if 'ICR On Total Premium' in grand_total_row.columns:
-                val_tp = grand_total_row['ICR On Total Premium'].values[0]
-                if pd.notna(val_tp):
-                    icr_tp_val = f"{val_tp:.2f}%"
-            if 'ICR On Earned Premium' in grand_total_row.columns:
-                val_ep = grand_total_row['ICR On Earned Premium'].values[0]
-                if pd.notna(val_ep):
-                    icr_ep_val = f"{val_ep:.2f}%"
+    # Updated ICR worksheet name in the uploaded workbook:
+    # 'Claim ICR on Prem EP' (previously 'ICR on Total Premium and EP').
+    df_icr = find_sheet([
+        "Claim ICR on Prem EP",
+        "ICR on Total Premium and EP",
+    ])
+    if df_icr is not None:
+        grand_total_row = find_total_row(df_icr, ["TOTAL", "Grand Total"])
+        if grand_total_row is not None:
+            total_icr_col = next(
+                (c for c in df_icr.columns if str(c).strip().casefold() == "icr"),
+                None,
+            )
+            earned_icr_col = next(
+                (
+                    c for c in df_icr.columns
+                    if "ICR ON EARNED PREMIUM" in str(c).upper()
+                ),
+                None,
+            )
+            if total_icr_col and pd.notna(grand_total_row[total_icr_col]):
+                icr_total_value = f"{grand_total_row[total_icr_col]:.2f}%"
+            if earned_icr_col and pd.notna(grand_total_row[earned_icr_col]):
+                icr_earned_value = f"{grand_total_row[earned_icr_col]:.2f}%"
 
-    # Render top metrics
+    # -------------------------------------------------------------------------
+    # TOP KPI CARDS
+    # -------------------------------------------------------------------------
     k1, k2, k3, k4 = st.columns(4)
-    with k1:
-        st.metric("Total Premium (FY 26-27)", total_prem_val)
-    with k2:
-        st.metric(accretion_label.title(), accretion_val)
-    with k3:
-        st.metric("ICR On Total Premium", icr_tp_val)
-    with k4:
-        st.metric("ICR On Earned Premium", icr_ep_val)
+    k1.metric("Total Premium (FY 26-27)", total_premium_value)
+    k2.metric(accretion_label.title(), accretion_value)
+    k3.metric("ICR on Total Premium", icr_total_value)
+    k4.metric("ICR on Earned Premium", icr_earned_value)
 
     st.markdown("---")
 
-    # 5. Display Only the Selected Sheet
+    # -------------------------------------------------------------------------
+    # SELECTED WORKSHEET AND FILTERS
+    # -------------------------------------------------------------------------
     st.header(f"📄 {selected_sheet}")
     df = all_sheets[selected_sheet]
-    
-    # Auto-generate column formatting config
-    col_format_config = {}
-    for c in df.columns:
-        c_upper = str(c).upper()
-        if 'ICR' in c_upper or 'ACCRETION' in c_upper or 'SHARE' in c_upper:
-            col_format_config[c] = st.column_config.NumberColumn(format="%.2f")
-        elif any(k in c_upper for k in ['PREMIUM', 'TOTAL', 'APR-', 'MAY-', 'JUN-', 'JUL-', 'AUG-', 'SEP-', 'OCT-', 'NOV-', 'DEC-', 'JAN-', 'FEB-', 'MAR-']):
-            col_format_config[c] = st.column_config.NumberColumn(format="₹ %,.2f")
-
     final_df = df.copy()
 
-    # -------------------------------------------------------------
-    # DEPARTMENT & METRICS SHEETS FILTERS
-    # -------------------------------------------------------------
-    if selected_sheet in ['25 26', '26 27', '25 26 26 27 For the month', '25 26 26 27 Up to the month', 'ICR on Total Premium and EP']:
-        st.subheader("Filters")
-        
-        dept_col = df.columns[0]
-        col1, col2 = st.columns([1, 2])
-        
-        with col1:
-            departments = df[dept_col].dropna().unique()
-            selected_dept = st.selectbox(
-                "Filter by Department/LOB:", 
-                options=["All"] + list(departments)
+    # Format figures for display.
+    col_format_config = {}
+    for column in df.columns:
+        upper = str(column).upper()
+        if any(term in upper for term in ["ICR", "ACCRETION", "SHARE"]):
+            col_format_config[column] = st.column_config.NumberColumn(
+                format="%.2f"
             )
+        elif any(
+            term in upper
+            for term in [
+                "PREMIUM", "TOTAL", "APR-", "MAY-", "JUN-", "JUL-",
+                "AUG-", "SEP-", "OCT-", "NOV-", "DEC-", "JAN-",
+                "FEB-", "MAR-",
+            ]
+        ):
+            col_format_config[column] = st.column_config.NumberColumn(
+                format="₹ %,.2f"
+            )
+
+    department_sheets = {
+        "25 26",
+        "26 27",
+        "25 26 26 27 For the month",
+        "25 26 26 27 Up to the month",
+        "Claim ICR on Prem EP",
+        "ICR on Total Premium and EP",
+    }
+    channel_sheets = {
+        "Channel wise 25 26",
+        "Channel wise 26 27",
+    }
+
+    if selected_sheet in department_sheets:
+        st.subheader("Filters")
+        department_column = df.columns[0]
+        col1, col2 = st.columns([1, 2])
+
+        with col1:
+            departments = df[department_column].dropna().unique().tolist()
+            selected_department = st.selectbox(
+                "Filter by Department / LOB:",
+                options=["All"] + departments,
+            )
+
         with col2:
             available_columns = df.columns[1:].tolist()
             selected_columns = st.multiselect(
-                "Select Columns to Display:", 
-                options=available_columns, 
-                default=available_columns
+                "Select Columns to Display:",
+                options=available_columns,
+                default=available_columns,
             )
-        
-        if selected_dept != "All":
-            final_df = final_df[final_df[dept_col] == selected_dept]
-        
-        columns_to_show = [dept_col] + selected_columns
-        final_df = final_df[columns_to_show]
 
-    # -------------------------------------------------------------
-    # CHANNEL SHEETS FILTERS
-    # -------------------------------------------------------------
-    elif selected_sheet in ['Channel wise 25 26', 'Channel wise 26 27']:
+        if selected_department != "All":
+            final_df = final_df[
+                final_df[department_column] == selected_department
+            ]
+        final_df = final_df[[department_column] + selected_columns]
+
+    elif selected_sheet in channel_sheets:
         st.subheader("Filters")
-        
         col1, col2, col3 = st.columns(3)
-        search_agent, search_broker, search_posp = "", "", ""
-        
-        agent_col = 'AGENT' if 'AGENT' in df.columns else ('Party Name' if 'Party Name' in df.columns else None)
-        
+        agent_search = broker_search = posp_search = ""
+
+        agent_column = next(
+            (c for c in ["AGENT", "Party Name"] if c in df.columns), None
+        )
         with col1:
-            if agent_col:
-                search_agent = st.text_input(f"Search by {agent_col}:")
+            if agent_column:
+                agent_search = st.text_input(f"Search by {agent_column}:")
         with col2:
-            if 'BROKER' in df.columns:
-                search_broker = st.text_input("Search by BROKER:")
+            if "BROKER" in df.columns:
+                broker_search = st.text_input("Search by BROKER:")
         with col3:
-            if 'POSP' in df.columns:
-                search_posp = st.text_input("Search by POSP:")
-        
-        if search_agent and agent_col:
-            final_df = final_df[final_df[agent_col].astype(str).str.contains(search_agent, case=False, na=False)]
-        if search_broker and 'BROKER' in final_df.columns:
-            final_df = final_df[final_df['BROKER'].astype(str).str.contains(search_broker, case=False, na=False)]
-        if search_posp and 'POSP' in final_df.columns:
-            final_df = final_df[final_df['POSP'].astype(str).str.contains(search_posp, case=False, na=False)]
+            if "POSP" in df.columns:
+                posp_search = st.text_input("Search by POSP:")
 
-    # -------------------------------------------------------------
-    # MISP SHEET FILTER
-    # -------------------------------------------------------------
-    elif selected_sheet == 'MISP':
+        if agent_search and agent_column:
+            final_df = final_df[
+                final_df[agent_column].astype(str).str.contains(
+                    agent_search, case=False, na=False, regex=False
+                )
+            ]
+        if broker_search and "BROKER" in final_df.columns:
+            final_df = final_df[
+                final_df["BROKER"].astype(str).str.contains(
+                    broker_search, case=False, na=False, regex=False
+                )
+            ]
+        if posp_search and "POSP" in final_df.columns:
+            final_df = final_df[
+                final_df["POSP"].astype(str).str.contains(
+                    posp_search, case=False, na=False, regex=False
+                )
+            ]
+
+    elif selected_sheet == "MISP":
         st.subheader("Filters")
-        search_misp = ""
-        
-        misp_col = "MISP's NAME" if "MISP's NAME" in df.columns else ("MISP" if "MISP" in df.columns else None)
-        if misp_col:
-            search_misp = st.text_input(f"Search by {misp_col}:")
-        
-        if search_misp and misp_col:
-            final_df = final_df[final_df[misp_col].astype(str).str.contains(search_misp, case=False, na=False)]
+        misp_column = next(
+            (c for c in ["MISP's NAME", "MISP"] if c in df.columns), None
+        )
+        if misp_column:
+            misp_search = st.text_input(f"Search by {misp_column}:")
+            if misp_search:
+                final_df = final_df[
+                    final_df[misp_column].astype(str).str.contains(
+                        misp_search, case=False, na=False, regex=False
+                    )
+                ]
 
-    # Display Data Table
+    # Display table and CSV download.
     st.dataframe(
-        final_df, 
-        use_container_width=True, 
+        final_df,
+        use_container_width=True,
         hide_index=True,
-        column_config=col_format_config
+        column_config=col_format_config,
     )
-    
-    # Export CSV Option
-    csv_data = final_df.to_csv(index=False).encode('utf-8')
+
+    csv_data = final_df.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         label=f"📥 Download '{selected_sheet}' Data as CSV",
         data=csv_data,
         file_name=f"{selected_sheet.replace(' ', '_')}_filtered.csv",
-        mime='text/csv'
+        mime="text/csv",
     )
 
-except FileNotFoundError:
-    st.error("Could not find the Excel file. Please use the sidebar to upload the file manually.")
-except Exception as e:
-    st.error(f"An error occurred while loading the dashboard: {e}")
+except Exception as error:
+    st.error(f"An error occurred while loading the dashboard: {error}")
+    st.info(
+        "If you are using an .xls file, ensure xlrd is listed in requirements.txt. "
+        "For an .xlsx file, openpyxl is required."
+    )
