@@ -1,4 +1,5 @@
 import os
+from datetime import date, datetime
 from io import BytesIO
 
 import pandas as pd
@@ -71,10 +72,26 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
         # Clean column names. Convert Excel date headers to APR-26 style.
         new_columns = []
         for column in df.columns:
-            if isinstance(column, (pd.Timestamp,)):
-                new_columns.append(column.strftime("%b-%y").upper())
+            # Excel date headers may arrive as pandas Timestamp, Python
+            # datetime/date, or a date-like string. Display them as APR-26.
+            if isinstance(column, (pd.Timestamp, datetime, date)):
+                new_columns.append(pd.Timestamp(column).strftime("%b-%y").upper())
             else:
-                new_columns.append(str(column).strip())
+                column_text = str(column).strip()
+                parsed_date = pd.to_datetime(
+                    column_text, errors="coerce"
+                ) if column_text else pd.NaT
+
+                # Only convert strings that look like full Excel dates;
+                # leave ordinary headings such as TOTAL or Dept unchanged.
+                if (
+                    pd.notna(parsed_date)
+                    and any(sep in column_text for sep in ("-", "/", ":"))
+                    and len(column_text) >= 7
+                ):
+                    new_columns.append(parsed_date.strftime("%b-%y").upper())
+                else:
+                    new_columns.append(column_text)
         df.columns = new_columns
 
         # Keep the first column and known identification/text fields as text.
