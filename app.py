@@ -167,6 +167,21 @@ try:
                 return matched.iloc[0]
         return None
 
+    def format_indian_number(value):
+        """Format a number using Indian digit grouping (3, then groups of 2)."""
+        number = int(round(float(value)))
+        sign = "-" if number < 0 else ""
+        digits = str(abs(number))
+        if len(digits) <= 3:
+            return sign + digits
+        last_three = digits[-3:]
+        remaining = digits[:-3]
+        groups = []
+        while remaining:
+            groups.insert(0, remaining[-2:])
+            remaining = remaining[:-2]
+        return sign + ",".join(groups + [last_three])
+
     total_premium_value = "N/A"
     accretion_label = "Accretion"
     accretion_value = "N/A"
@@ -178,7 +193,7 @@ try:
     if df_current is not None and "TOTAL" in df_current.columns:
         total_row = find_total_row(df_current, ["Sum for all"])
         if total_row is not None and pd.notna(total_row["TOTAL"]):
-            total_premium_value = f"₹ {int(round(total_row['TOTAL'])):,}"
+            total_premium_value = f"₹ {format_indian_number(total_row['TOTAL'])}"
 
     # Latest cumulative accretion: find the last column containing ACCRETION.
     df_upto = find_sheet(["25 26 26 27 Up to the month"])
@@ -194,30 +209,32 @@ try:
             if total_row is not None and pd.notna(total_row[latest_column]):
                 accretion_value = f"{total_row[latest_column]:.2f}%"
 
-    # Updated ICR worksheet name in the uploaded workbook:
-    # 'Claim ICR on Prem EP' (previously 'ICR on Total Premium and EP').
-    df_icr = find_sheet([
-        "Claim ICR on Prem EP",
-        "ICR on Total Premium and EP",
-    ])
-    if df_icr is not None:
-        grand_total_row = find_total_row(df_icr, ["TOTAL", "Grand Total"])
-        if grand_total_row is not None:
-            total_icr_col = next(
-                (c for c in df_icr.columns if str(c).strip().casefold() == "icr"),
-                None,
-            )
-            earned_icr_col = next(
-                (
-                    c for c in df_icr.columns
-                    if "ICR ON EARNED PREMIUM" in str(c).upper()
-                ),
-                None,
-            )
-            if total_icr_col and pd.notna(grand_total_row[total_icr_col]):
-                icr_total_value = f"{grand_total_row[total_icr_col]:.2f}%"
-            if earned_icr_col and pd.notna(grand_total_row[earned_icr_col]):
-                icr_earned_value = f"{grand_total_row[earned_icr_col]:.2f}%"
+    # Read ICR directly from the specified cells in 'Dept Wise ICR Prem EP'.
+    # Excel cell F25 is row 25/column F; G25 is row 25/column G.
+    icr_sheet_name = next(
+        (
+            name for name in sheet_names
+            if name.strip().casefold() == "dept wise icr prem ep"
+        ),
+        None,
+    )
+    if icr_sheet_name is not None:
+        extension = os.path.splitext(file_name.lower())[1]
+        engine = "xlrd" if extension == ".xls" else "openpyxl"
+        df_icr_raw = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=icr_sheet_name,
+            header=None,
+            engine=engine,
+        )
+        if df_icr_raw.shape[0] >= 25 and df_icr_raw.shape[1] >= 7:
+            total_icr_cell = df_icr_raw.iloc[24, 5]   # F25
+            earned_icr_cell = df_icr_raw.iloc[24, 6]  # G25
+
+            if pd.notna(total_icr_cell):
+                icr_total_value = f"{float(total_icr_cell):.2f}%"
+            if pd.notna(earned_icr_cell):
+                icr_earned_value = f"{float(earned_icr_cell):.2f}%"
 
     # -------------------------------------------------------------------------
     # TOP KPI CARDS
@@ -264,6 +281,7 @@ try:
         "25 26 26 27 Up to the month",
         "Claim ICR on Prem EP",
         "ICR on Total Premium and EP",
+        "Dept Wise ICR Prem EP",
     }
     channel_sheets = {
         "Channel wise 25 26",
@@ -346,6 +364,14 @@ try:
                         misp_search, case=False, na=False, regex=False
                     )
                 ]
+
+    # Keep the first (Department) column pinned while scrolling horizontally.
+    if len(final_df.columns) > 0:
+        first_column = final_df.columns[0]
+        col_format_config.setdefault(
+            first_column,
+            st.column_config.TextColumn(pinned="left"),
+        )
 
     # Display table and CSV download.
     st.dataframe(
