@@ -92,7 +92,17 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
                     new_columns.append(parsed_date.strftime("%b-%y").upper())
                 else:
                     new_columns.append(column_text)
-        df.columns = new_columns
+        # Normalising Excel date headers can occasionally create duplicate
+        # labels (for example, two dates in the same month). Make labels unique
+        # before using them as DataFrame column selectors.
+        unique_columns = []
+        seen_columns = {}
+        for column in new_columns:
+            base = str(column).strip()
+            count = seen_columns.get(base, 0)
+            seen_columns[base] = count + 1
+            unique_columns.append(base if count == 0 else f"{base}.{count}")
+        df.columns = unique_columns
 
         # Keep the first column and known identification/text fields as text.
         text_columns = {
@@ -101,13 +111,15 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
             "Dept ", "Dept  FOR THE MONTH", "Dept   UPTO THE MONTH",
             "Dept Code", "Sl no", "SL NO",
         }
-        first_column = df.columns[0] if len(df.columns) else None
 
-        for column in df.columns:
-            if column == first_column or column in text_columns:
+        # Use positional selection so duplicate labels can never cause
+        # pd.to_numeric() to receive a 2-D DataFrame instead of a Series.
+        for column_index, column_name in enumerate(df.columns):
+            if column_index == 0 or column_name in text_columns:
                 continue
-            # Numeric conversion is safe for figures and leaves text as NaN.
-            df[column] = pd.to_numeric(df[column], errors="coerce")
+            df.iloc[:, column_index] = pd.to_numeric(
+                df.iloc[:, column_index], errors="coerce"
+            )
 
         cleaned_sheets[sheet_name] = df.round(2)
 
@@ -437,6 +449,7 @@ try:
 
 except Exception as error:
     st.error(f"An error occurred while loading the dashboard: {error}")
+    st.caption("If this persists, check the Streamlit app logs for the exact line number.")
     st.info(
         "If you are using an .xls file, ensure xlrd is listed in requirements.txt. "
         "For an .xlsx file, openpyxl is required."
