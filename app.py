@@ -146,27 +146,8 @@ try:
     )
 
     # -------------------------------------------------------------------------
-    # KPI HELPERS - use sheet/column matching so minor renaming is manageable.
+    # KPI FIGURES - read the exact cells from the requested worksheets.
     # -------------------------------------------------------------------------
-    def find_sheet(name_candidates):
-        for candidate in name_candidates:
-            candidate_clean = candidate.strip().casefold()
-            for actual_name in all_sheets:
-                if actual_name.strip().casefold() == candidate_clean:
-                    return all_sheets[actual_name]
-        return None
-
-    def find_total_row(df, terms):
-        if df is None or df.empty:
-            return None
-        first_col = df.columns[0]
-        values = df[first_col].astype(str)
-        for term in terms:
-            matched = df[values.str.contains(term, case=False, na=False)]
-            if not matched.empty:
-                return matched.iloc[0]
-        return None
-
     def format_indian_number(value):
         """Format a number using Indian digit grouping (3, then groups of 2)."""
         number = int(round(float(value)))
@@ -182,45 +163,108 @@ try:
             remaining = remaining[:-2]
         return sign + ",".join(groups + [last_three])
 
+    def parse_month_header(value):
+        """Return a pandas Timestamp for a date-like Excel column heading."""
+        if isinstance(value, (pd.Timestamp, datetime, date)):
+            return pd.Timestamp(value)
+        if isinstance(value, str):
+            parsed = pd.to_datetime(value.strip(), errors="coerce")
+            if pd.notna(parsed):
+                return pd.Timestamp(parsed)
+        return pd.NaT
+
     total_premium_value = "N/A"
-    accretion_label = "Accretion"
+    premium_label = "Up to latest month Premium"
+    accretion_label = "Accretion % Up to latest month"
     accretion_value = "N/A"
     icr_total_value = "N/A"
     icr_earned_value = "N/A"
 
-    # Total premium: current workbook has this in sheet '26 27'.
-    df_current = find_sheet(["26 27"])
-    if df_current is not None and "TOTAL" in df_current.columns:
-        total_row = find_total_row(df_current, ["Sum for all"])
-        if total_row is not None and pd.notna(total_row["TOTAL"]):
-            total_premium_value = f"₹ {format_indian_number(total_row['TOTAL'])}"
+    extension = os.path.splitext(file_name.lower())[1]
+    engine = "xlrd" if extension == ".xls" else "openpyxl"
 
-    # Latest cumulative accretion: find the last column containing ACCRETION.
-    df_upto = find_sheet(["25 26 26 27 Up to the month"])
-    if df_upto is not None:
-        accretion_columns = [
-            col for col in df_upto.columns
-            if "ACCRETION" in str(col).upper()
-        ]
-        if accretion_columns:
-            latest_column = accretion_columns[-1]
-            accretion_label = str(latest_column)
-            total_row = find_total_row(df_upto, ["Sum for all"])
-            if total_row is not None and pd.notna(total_row[latest_column]):
-                accretion_value = f"{total_row[latest_column]:.2f}%"
+    # 1 & 2. Premium and accretion are on the total row (Excel row 29)
+    # of 'revised upto mon comp 2526 2627'. Find the latest FY 2026-27
+    # month heading that has its matching 'Accretion upto ...' heading.
+    monthly_sheet_name = next(
+        (
+            name for name in sheet_names
+            if name.strip().casefold() == "revised upto mon comp 2526 2627"
+        ),
+        None,
+    )
 
-    # Read ICR directly from the specified cells in 'Dept Wise ICR Prem EP'.
-    # Excel cell F25 is row 25/column F; G25 is row 25/column G.
+    if monthly_sheet_name is not None:
+        df_monthly_raw = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=monthly_sheet_name,
+            header=None,
+            engine=engine,
+        )
+
+        # Excel row 2 contains the month headings; Excel row 29 contains
+        # 'Sum for all departments'. These are zero-based rows 1 and 28.
+        if df_monthly_raw.shape[0] >= 29:
+            header_row = df_monthly_raw.iloc[1]
+            total_row = df_monthly_raw.iloc[28]
+            monthly_candidates = []
+
+            for column_index, heading in enumerate(header_row):
+                month_date = parse_month_header(heading)
+                if (
+                    pd.isna(month_date)
+                    or month_date < pd.Timestamp("2026-04-01")
+                    or month_date > pd.Timestamp("2027-03-31")
+                ):
+                    continue
+                accretion_index = column_index + 1
+                if accretion_index >= len(header_row):
+                    continue
+
+                accretion_heading = str(header_row.iloc[accretion_index]).strip()
+                expected_month = month_date.strftime("%b %y")
+                if "accretion" not in accretion_heading.casefold():
+                    continue
+                if expected_month.casefold() not in accretion_heading.casefold():
+                    continue
+
+                premium_cell = total_row.iloc[column_index]
+                accretion_cell = total_row.iloc[accretion_index]
+                if pd.notna(premium_cell) and pd.notna(accretion_cell):
+                    monthly_candidates.append(
+                        (month_date, premium_cell, accretion_cell)
+                    )
+
+            if monthly_candidates:
+                # The latest populated month is selected automatically.
+                latest_month, premium_cell, accretion_cell = max(
+                    monthly_candidates, key=lambda item: item[0]
+                )
+                month_label = latest_month.strftime("%b %y")
+                premium_label = f"Up to {month_label} Premium"
+                accretion_label = f"Accretion % Up to {month_label}"
+                total_premium_value = f"₹ {format_indian_number(premium_cell)}"
+                accretion_value = f"{float(accretion_cell):.2f}%"
+        else:
+            st.warning(
+                "The monthly comparison sheet does not contain the expected "
+                "total row (Excel row 29)."
+            )
+    else:
+        st.warning(
+            "Worksheet 'revised upto mon comp 2526 2627' was not found."
+        )
+
+    # 3 & 4. ICR values are read directly from F25 and G25 in
+    # 'dept wise icr premium Ep'.
     icr_sheet_name = next(
         (
             name for name in sheet_names
-            if name.strip().casefold() == "dept wise icr prem ep"
+            if name.strip().casefold() == "dept wise icr premium ep"
         ),
         None,
     )
     if icr_sheet_name is not None:
-        extension = os.path.splitext(file_name.lower())[1]
-        engine = "xlrd" if extension == ".xls" else "openpyxl"
         df_icr_raw = pd.read_excel(
             BytesIO(file_bytes),
             sheet_name=icr_sheet_name,
@@ -228,22 +272,24 @@ try:
             engine=engine,
         )
         if df_icr_raw.shape[0] >= 25 and df_icr_raw.shape[1] >= 7:
-            total_icr_cell = df_icr_raw.iloc[24, 5]   # F25
-            earned_icr_cell = df_icr_raw.iloc[24, 6]  # G25
+            total_icr_cell = df_icr_raw.iloc[24, 5]   # Excel F25
+            earned_icr_cell = df_icr_raw.iloc[24, 6]  # Excel G25
 
             if pd.notna(total_icr_cell):
                 icr_total_value = f"{float(total_icr_cell):.2f}%"
             if pd.notna(earned_icr_cell):
                 icr_earned_value = f"{float(earned_icr_cell):.2f}%"
+    else:
+        st.warning("Worksheet 'dept wise icr premium Ep' was not found.")
 
     # -------------------------------------------------------------------------
     # TOP KPI CARDS
     # -------------------------------------------------------------------------
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric("Total Premium (FY 26-27)", total_premium_value)
-    k2.metric(accretion_label.title(), accretion_value)
-    k3.metric("ICR on Total Premium", icr_total_value)
-    k4.metric("ICR on Earned Premium", icr_earned_value)
+    k1.metric(premium_label, total_premium_value)
+    k2.metric(accretion_label, accretion_value)
+    k3.metric("ICR % on Total Premium", icr_total_value)
+    k4.metric("ICR % on Earned Premium", icr_earned_value)
 
     st.markdown("---")
 
