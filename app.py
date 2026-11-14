@@ -78,16 +78,27 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
                 )
             else:
                 column_text = str(column).strip()
-                parsed_date = (
-                    pd.to_datetime(column_text, errors="coerce")
-                    if column_text else pd.NaT
-                )
 
-                if (
-                    pd.notna(parsed_date)
-                    and any(sep in column_text for sep in ("-", "/", ":"))
-                    and len(column_text) >= 7
-                ):
+                # Excel month headings may arrive as strings such as
+                # Apr-25 (6 characters), Apr-2025, or as actual dates.
+                parsed_date = pd.NaT
+                if column_text:
+                    for month_format in (
+                        "%b-%y", "%b-%Y", "%b %y", "%b %Y",
+                        "%B-%y", "%B-%Y", "%B %y", "%B %Y",
+                    ):
+                        parsed_date = pd.to_datetime(
+                            column_text, format=month_format, errors="coerce"
+                        )
+                        if pd.notna(parsed_date):
+                            break
+
+                    if pd.isna(parsed_date):
+                        parsed_date = pd.to_datetime(
+                            column_text, errors="coerce"
+                        )
+
+                if pd.notna(parsed_date):
                     new_columns.append(
                         parsed_date.strftime("%b-%y").upper()
                     )
@@ -208,7 +219,19 @@ try:
             return pd.Timestamp(value)
 
         if isinstance(value, str):
-            parsed = pd.to_datetime(value.strip(), errors="coerce")
+            month_text = value.strip()
+
+            for month_format in (
+                "%b-%y", "%b-%Y", "%b %y", "%b %Y",
+                "%B-%y", "%B-%Y", "%B %y", "%B %Y",
+            ):
+                parsed = pd.to_datetime(
+                    month_text, format=month_format, errors="coerce"
+                )
+                if pd.notna(parsed):
+                    return pd.Timestamp(parsed)
+
+            parsed = pd.to_datetime(month_text, errors="coerce")
             if pd.notna(parsed):
                 return pd.Timestamp(parsed)
 
