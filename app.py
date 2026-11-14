@@ -119,9 +119,23 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
             if column_index == 0 or column_name in text_columns:
                 continue
 
-            df.iloc[:, column_index] = pd.to_numeric(
-                df.iloc[:, column_index], errors="coerce"
+            # Convert safely even when Excel has formatted an otherwise
+            # blank column as a date. NaT values must become NaN before
+            # numeric conversion; otherwise pandas can turn them into the
+            # integer sentinel -9223372036854775808.
+            source_values = df[column_name]
+            source_values = source_values.astype("object")
+            source_values = source_values.where(
+                pd.notna(source_values), None
             )
+
+            numeric_values = pd.to_numeric(
+                source_values, errors="coerce"
+            )
+
+            # Assign by column name so pandas replaces the original
+            # datetime dtype instead of trying to write integers into it.
+            df[column_name] = numeric_values
 
         cleaned_sheets[sheet_name] = df.round(2)
 
