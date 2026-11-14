@@ -730,7 +730,154 @@ try:
 
     elif selected_sheet in channel_sheets:
 
-        st.subheader("Filters")
+        # -------------------------------------------------
+        # MONTH-WISE CHANNEL SUMMARY (SECOND TABLE)
+        # -------------------------------------------------
+        # The monthly summary is appended below the main
+        # agent-wise table in the Excel worksheet. It has
+        # its own header row, so it must be read separately
+        # rather than treated as part of the first table.
+        st.subheader("Month-wise Channel Summary")
+
+        raw_channel_sheet = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=selected_sheet,
+            header=None,
+            engine=engine,
+        )
+
+        summary_header_row = None
+
+        for row_index in range(len(raw_channel_sheet)):
+            row_values = raw_channel_sheet.iloc[row_index].tolist()
+            row_text = " ".join(
+                str(value).strip()
+                for value in row_values
+                if pd.notna(value)
+            ).casefold()
+
+            if "channel wise" in row_text and (
+                "25-26" in row_text or "26-27" in row_text
+            ):
+                summary_header_row = row_index
+                break
+
+        if summary_header_row is not None:
+            header_values = raw_channel_sheet.iloc[
+                summary_header_row
+            ].tolist()
+
+            month_columns = []
+            for value in header_values[2:14]:
+                if isinstance(value, (pd.Timestamp, datetime, date)):
+                    month_columns.append(
+                        pd.Timestamp(value).strftime("%b-%y")
+                    )
+                elif pd.notna(value):
+                    month_text = str(value).strip()
+                    parsed_month = pd.NaT
+
+                    for month_format in (
+                        "%b-%y", "%b-%Y", "%b %y", "%b %Y",
+                        "%B-%y", "%B-%Y", "%B %y", "%B %Y",
+                    ):
+                        parsed_month = pd.to_datetime(
+                            month_text,
+                            format=month_format,
+                            errors="coerce",
+                        )
+                        if pd.notna(parsed_month):
+                            break
+
+                    month_columns.append(
+                        pd.Timestamp(parsed_month).strftime("%b-%y")
+                        if pd.notna(parsed_month)
+                        else month_text
+                    )
+                else:
+                    month_columns.append("")
+
+            summary_rows = []
+            for row_index in range(
+                summary_header_row + 1,
+                min(summary_header_row + 10, len(raw_channel_sheet)),
+            ):
+                row_values = raw_channel_sheet.iloc[row_index].tolist()
+                channel_name = (
+                    row_values[1]
+                    if len(row_values) > 1
+                    else None
+                )
+
+                if pd.isna(channel_name) or not str(channel_name).strip():
+                    break
+
+                channel_name = str(channel_name).strip()
+                row_data = {"Channel": channel_name}
+
+                for month_index, month_name in enumerate(month_columns):
+                    source_index = month_index + 2
+                    source_value = (
+                        row_values[source_index]
+                        if source_index < len(row_values)
+                        else None
+                    )
+                    row_data[month_name or f"Month {month_index + 1}"] = (
+                        pd.to_numeric(source_value, errors="coerce")
+                    )
+
+                summary_rows.append(row_data)
+
+                if channel_name.upper() == "TOTAL":
+                    break
+
+            if summary_rows:
+                summary_df = pd.DataFrame(summary_rows)
+                summary_config = {
+                    column: st.column_config.NumberColumn(
+                        format="₹ %,.0f"
+                    )
+                    for column in summary_df.columns
+                    if column != "Channel"
+                }
+                summary_config["Channel"] = st.column_config.TextColumn(
+                    pinned="left"
+                )
+
+                st.dataframe(
+                    summary_df,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config=summary_config,
+                )
+
+                summary_csv = summary_df.to_csv(
+                    index=False
+                ).encode("utf-8-sig")
+
+                st.download_button(
+                    label="📥 Download Month-wise Channel Summary as CSV",
+                    data=summary_csv,
+                    file_name=(
+                        f"{selected_sheet.replace(' ', '_')}_"
+                        "monthly_summary.csv"
+                    ),
+                    mime="text/csv",
+                    key=f"{selected_sheet}_monthly_summary_download",
+                )
+            else:
+                st.warning(
+                    "The monthly channel summary heading was found, "
+                    "but no channel figures were found below it."
+                )
+        else:
+            st.warning(
+                "Could not find the separate month-wise channel summary "
+                "table in this worksheet."
+            )
+
+        st.markdown("---")
+        st.subheader("Agent-wise Details and Filters")
 
         col1, col2, col3 = st.columns(3)
 
