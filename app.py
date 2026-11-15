@@ -271,27 +271,21 @@ try:
             engine=engine,
         )
 
-    # -----------------------------------------------------
-    # TOP PREMIUM / ACCRETION + CHANNEL-WISE GROWTH
-    # Source: Channel wise 26 27
-    # Excel row 299 = total premium; row 308 = total accretion
-    # Excel rows 302:307 = channel-wise growth
-    # Excel columns I:N = Oct 2026 to Mar 2027
-    # -----------------------------------------------------
+
+    # ---------------------------------------------------------
+    # CHANNEL-WISE KPI FIGURES
+    # The worksheet is read by section headings, not fixed row
+    # numbers, so adding rows above a section will not break it.
+    # ---------------------------------------------------------
     channel_sheet_name = next(
-        (
-            name for name in sheet_names
-            if name.strip().casefold() == "channel wise 26 27"
-        ),
+        (name for name in sheet_names
+         if name.strip().casefold() == "channel wise 26 27"),
         None,
     )
 
     channel_growth_rows = []
+    channel_share_rows = []
     channel_month_text = "latest month"
-    total_premium_value = "N/A"
-    premium_label = "Up to latest month Premium"
-    accretion_label = "Accretion % Up to latest month"
-    accretion_value = "N/A"
 
     if channel_sheet_name is not None:
         channel_raw = pd.read_excel(
@@ -301,59 +295,126 @@ try:
             engine=engine,
         )
 
-        # Excel row 292 (zero-based 291) contains month dates.
-        # Excel row 299 (zero-based 298) contains cumulative premium.
-        # Excel row 308 (zero-based 307) contains total accretion.
-        if channel_raw.shape[0] >= 308 and channel_raw.shape[1] >= 14:
-            month_header = channel_raw.iloc[291]
-            premium_total_row = channel_raw.iloc[298]
-            accretion_total_row = channel_raw.iloc[307]
+        def find_channel_heading(text, exclude=None):
+            for row_index in range(len(channel_raw)):
+                value = channel_raw.iloc[row_index, 1] if channel_raw.shape[1] > 1 else None
+                if isinstance(value, str) and text.casefold() in value.casefold():
+                    if exclude and exclude.casefold() in value.casefold():
+                        continue
+                    return row_index
+            return None
 
-            available_months = []
-            for col_index in range(2, min(14, len(month_header))):
-                month_date = parse_month_header(month_header.iloc[col_index])
-                premium_cell = pd.to_numeric(
-                    premium_total_row.iloc[col_index], errors="coerce"
-                )
-                if pd.notna(month_date) and pd.notna(premium_cell):
-                    available_months.append(
-                        (month_date, col_index, premium_cell)
+        def next_nonempty_row(start_row, limit=8):
+            for row_index in range(start_row, min(start_row + limit, len(channel_raw))):
+                if channel_raw.iloc[row_index].notna().any():
+                    return row_index
+            return None
+
+        def month_label(value):
+            parsed = parse_month_header(value)
+            return parsed.strftime("%b %y") if pd.notna(parsed) else None
+
+        def get_table_after_heading(heading_text, exclude=None):
+            heading_row = find_channel_heading(heading_text, exclude=exclude)
+            if heading_row is None:
+                return None, None, None
+            header_row = next_nonempty_row(heading_row + 1, limit=8)
+            if header_row is None:
+                return heading_row, None, None
+            return heading_row, header_row, channel_raw.iloc[header_row]
+
+        # Cumulative premium table: locate the TOTAL row and latest
+        # month dynamically (currently Oct-26; next month will move on).
+        _, cumulative_header_row, cumulative_header = get_table_after_heading(
+            "CHANNEL WISE UPTO EACH MONTH", exclude="GROWTH"
+        )
+        if cumulative_header_row is not None:
+            cumulative_total_row = None
+            for row_index in range(cumulative_header_row + 1, len(channel_raw)):
+                label = str(channel_raw.iloc[row_index, 1]).strip().upper()
+                if label == "TOTAL":
+                    cumulative_total_row = channel_raw.iloc[row_index]
+                    break
+                if row_index > cumulative_header_row + 1 and not channel_raw.iloc[row_index].notna().any():
+                    break
+
+            if cumulative_total_row is not None:
+                month_candidates = []
+                for col_index in range(2, len(cumulative_header)):
+                    parsed = parse_month_header(cumulative_header.iloc[col_index])
+                    value = pd.to_numeric(cumulative_total_row.iloc[col_index], errors="coerce")
+                    if pd.notna(parsed) and pd.notna(value):
+                        month_candidates.append((parsed, col_index, value))
+
+                if month_candidates:
+                    latest_month, latest_col, premium_cell = max(
+                        month_candidates, key=lambda item: item[0]
                     )
+                    channel_month_text = latest_month.strftime("%b %y")
+                    premium_label = f"Up to {channel_month_text} Premium"
+                    total_premium_value = f"₹ {format_indian_number(premium_cell)}"
 
-            if available_months:
-                latest_month, latest_col, premium_cell = max(
-                    available_months, key=lambda item: item[0]
-                )
-                channel_month_text = latest_month.strftime("%b %y")
-                premium_label = f"Up to {channel_month_text} Premium"
-                accretion_label = f"Accretion % Up to {channel_month_text}"
-                total_premium_value = (
-                    f"₹ {format_indian_number(premium_cell)}"
-                )
+        # Total accretion is the TOTAL row in the growth section.
+        _, growth_header_row, growth_header = get_table_after_heading(
+            "CHANNEL WISE GROWTH UPTO EACH MONTH"
+        )
+        if growth_header_row is not None:
+            growth_total_row = None
+            for row_index in range(growth_header_row + 1, len(channel_raw)):
+                label = str(channel_raw.iloc[row_index, 1]).strip().upper()
+                if label == "TOTAL":
+                    growth_total_row = channel_raw.iloc[row_index]
+                    break
+                if row_index > growth_header_row + 1 and not channel_raw.iloc[row_index].notna().any():
+                    break
 
-                accretion_cell = pd.to_numeric(
-                    accretion_total_row.iloc[latest_col], errors="coerce"
-                )
-                if pd.notna(accretion_cell):
-                    accretion_value = f"{float(accretion_cell):.2f}%"
-
-                # Excel rows 302 to 307: AGENCY through CORP AGENT SF.
-                for excel_row in range(302, 308):
-                    row_index = excel_row - 1
-                    channel_name = str(
-                        channel_raw.iloc[row_index, 1]
-                    ).strip()
-                    growth_value = pd.to_numeric(
-                        channel_raw.iloc[row_index, latest_col],
-                        errors="coerce",
+            if growth_total_row is not None:
+                growth_candidates = []
+                for col_index in range(2, len(growth_header)):
+                    parsed = parse_month_header(growth_header.iloc[col_index])
+                    value = pd.to_numeric(growth_total_row.iloc[col_index], errors="coerce")
+                    if pd.notna(parsed) and pd.notna(value):
+                        growth_candidates.append((parsed, col_index, value))
+                if growth_candidates:
+                    latest_growth_month, growth_col, growth_value = max(
+                        growth_candidates, key=lambda item: item[0]
                     )
-                    channel_growth_rows.append(
-                        (channel_name, growth_value)
-                    )
-            else:
-                st.warning(
-                    "No populated month was found in 'Channel wise 26 27'."
-                )
+                    accretion_label = f"Accretion % Up to {latest_growth_month.strftime('%b %y')}"
+                    accretion_value = f"{float(growth_value):.2f}%"
+
+                    # Six channel growth figures for the same latest month.
+                    for row_index in range(growth_header_row + 1, len(channel_raw)):
+                        channel_name = channel_raw.iloc[row_index, 1]
+                        if pd.isna(channel_name) or str(channel_name).strip().upper() == "TOTAL":
+                            if str(channel_name).strip().upper() == "TOTAL":
+                                break
+                            continue
+                        value = pd.to_numeric(
+                            channel_raw.iloc[row_index, growth_col], errors="coerce"
+                        )
+                        channel_growth_rows.append((str(channel_name).strip(), value))
+
+        # Channel-wise share of premium: values are in Excel D280:D285.
+        # Find the summary section and read the six channel rows below
+        # its column headings; the current month label is read from Excel.
+        _, share_header_row, share_header = get_table_after_heading(
+            "CHANNEL WISE TOTAL PREMIUM", exclude="REVISED"
+        )
+        if share_header_row is not None:
+            share_month_label = str(channel_raw.iloc[share_header_row, 1]).strip()
+            month_match = re.search(r"UPTO\s+([A-Z]{3}\s*\d{2})", share_month_label, re.I)
+            share_period = month_match.group(1).title() if month_match else channel_month_text
+            share_label = f"Channel-wise share of premium up to {share_period}"
+
+            for row_index in range(share_header_row + 1, min(share_header_row + 8, len(channel_raw))):
+                channel_name = channel_raw.iloc[row_index, 1]
+                if pd.isna(channel_name):
+                    break
+                channel_name = str(channel_name).strip()
+                if channel_name.upper() == "TOTAL":
+                    break
+                share_value = pd.to_numeric(channel_raw.iloc[row_index, 3], errors="coerce")
+                channel_share_rows.append((channel_name, share_value))
     else:
         st.warning("Worksheet 'Channel wise 26 27' was not found.")
 
@@ -389,33 +450,45 @@ try:
             if pd.notna(earned_icr_cell):
                 icr_earned_value = f"{float(earned_icr_cell):.2f}%"
 
+
     # -----------------------------------------------------
-    # FOUR MAIN KPI CARDS
+    # MAIN KPI CARDS
     # -----------------------------------------------------
     k1, k2, k3, k4 = st.columns(4)
-
     k1.metric(premium_label, total_premium_value)
     k2.metric(accretion_label, accretion_value)
     k3.metric("ICR % on Total Premium", icr_total_value)
     k4.metric("ICR % on Earned Premium", icr_earned_value)
 
     # -----------------------------------------------------
+    # CHANNEL-WISE SHARE OF PREMIUM
+    # -----------------------------------------------------
+    if channel_share_rows:
+        st.markdown(f"#### {share_label}")
+        share_columns = st.columns(6)
+        for share_column, (channel_name, share_value) in zip(
+            share_columns, channel_share_rows
+        ):
+            display_value = (
+                f"{float(share_value):.2f}%"
+                if pd.notna(share_value) else "—"
+            )
+            share_column.metric(channel_name, display_value)
+
+    # -----------------------------------------------------
     # CHANNEL-WISE GROWTH
     # -----------------------------------------------------
-    st.markdown(f"#### Channel-wise Growth up to {channel_month_text}")
     if channel_growth_rows:
+        st.markdown(f"#### Channel-wise Growth up to {channel_month_text}")
         growth_columns = st.columns(6)
         for growth_column, (channel_name, growth_value) in zip(
             growth_columns, channel_growth_rows
         ):
             display_value = (
                 f"{float(growth_value):.2f}%"
-                if pd.notna(growth_value)
-                else "—"
+                if pd.notna(growth_value) else "—"
             )
             growth_column.metric(channel_name, display_value)
-    else:
-        st.info("Channel-wise growth figures are not available.")
 
     # -----------------------------------------------------
     # LOB / DEPARTMENT-WISE ACCRETION
@@ -762,16 +835,13 @@ try:
             [department_column] + selected_columns
         ]
 
+
     elif selected_sheet in channel_sheets:
 
-        # -------------------------------------------------
-        # MONTH-WISE CHANNEL SUMMARY (SECOND TABLE)
-        # -------------------------------------------------
-        # The monthly summary is appended below the main
-        # agent-wise table in the Excel worksheet. It has
-        # its own header row, so it must be read separately
-        # rather than treated as part of the first table.
-        st.subheader("Month-wise Channel Summary")
+        st.caption(
+            "Each Excel section is displayed separately using its heading. "
+            "Blank rows separate sections; month headings are shown as Apr-26, May-26, etc."
+        )
 
         raw_channel_sheet = pd.read_excel(
             BytesIO(file_bytes),
@@ -780,201 +850,175 @@ try:
             engine=engine,
         )
 
-        summary_header_row = None
-
-        for row_index in range(len(raw_channel_sheet)):
-            row_values = raw_channel_sheet.iloc[row_index].tolist()
-            row_text = " ".join(
-                str(value).strip()
-                for value in row_values
-                if pd.notna(value)
-            ).casefold()
-
-            if "channel wise" in row_text and (
-                "25-26" in row_text or "26-27" in row_text
-            ):
-                summary_header_row = row_index
-                break
-
-        if summary_header_row is not None:
-            header_values = raw_channel_sheet.iloc[
-                summary_header_row
-            ].tolist()
-
-            month_columns = []
-            for value in header_values[2:14]:
-                if isinstance(value, (pd.Timestamp, datetime, date)):
-                    month_columns.append(
-                        pd.Timestamp(value).strftime("%b-%y")
-                    )
-                elif pd.notna(value):
-                    month_text = str(value).strip()
-                    parsed_month = pd.NaT
-
-                    for month_format in (
-                        "%b-%y", "%b-%Y", "%b %y", "%b %Y",
-                        "%B-%y", "%B-%Y", "%B %y", "%B %Y",
-                    ):
-                        parsed_month = pd.to_datetime(
-                            month_text,
-                            format=month_format,
-                            errors="coerce",
-                        )
-                        if pd.notna(parsed_month):
-                            break
-
-                    month_columns.append(
-                        pd.Timestamp(parsed_month).strftime("%b-%y")
-                        if pd.notna(parsed_month)
-                        else month_text
-                    )
-                else:
-                    month_columns.append("")
-
-            summary_rows = []
-            for row_index in range(
-                summary_header_row + 1,
-                min(summary_header_row + 10, len(raw_channel_sheet)),
-            ):
-                row_values = raw_channel_sheet.iloc[row_index].tolist()
-                channel_name = (
-                    row_values[1]
-                    if len(row_values) > 1
-                    else None
-                )
-
-                if pd.isna(channel_name) or not str(channel_name).strip():
-                    break
-
-                channel_name = str(channel_name).strip()
-                row_data = {"Channel": channel_name}
-
-                for month_index, month_name in enumerate(month_columns):
-                    source_index = month_index + 2
-                    source_value = (
-                        row_values[source_index]
-                        if source_index < len(row_values)
-                        else None
-                    )
-                    row_data[month_name or f"Month {month_index + 1}"] = (
-                        pd.to_numeric(source_value, errors="coerce")
-                    )
-
-                summary_rows.append(row_data)
-
-                if channel_name.upper() == "TOTAL":
-                    break
-
-            if summary_rows:
-                summary_df = pd.DataFrame(summary_rows)
-                summary_config = {
-                    column: st.column_config.NumberColumn(
-                        format="₹ %,.0f"
-                    )
-                    for column in summary_df.columns
-                    if column != "Channel"
-                }
-                summary_config["Channel"] = st.column_config.TextColumn(
-                    pinned="left"
-                )
-
-                st.dataframe(
-                    summary_df,
-                    use_container_width=True,
-                    hide_index=True,
-                    column_config=summary_config,
-                )
-
-                summary_csv = summary_df.to_csv(
-                    index=False
-                ).encode("utf-8-sig")
-
-                st.download_button(
-                    label="📥 Download Month-wise Channel Summary as CSV",
-                    data=summary_csv,
-                    file_name=(
-                        f"{selected_sheet.replace(' ', '_')}_"
-                        "monthly_summary.csv"
-                    ),
-                    mime="text/csv",
-                    key=f"{selected_sheet}_monthly_summary_download",
-                )
-            else:
-                st.warning(
-                    "The monthly channel summary heading was found, "
-                    "but no channel figures were found below it."
-                )
-        else:
-            st.warning(
-                "Could not find the separate month-wise channel summary "
-                "table in this worksheet."
+        def is_section_heading(row_index):
+            if raw_channel_sheet.shape[1] <= 1:
+                return False
+            value = raw_channel_sheet.iloc[row_index, 1]
+            return (
+                isinstance(value, str)
+                and value.strip().endswith(":-")
             )
 
-        st.markdown("---")
-        st.subheader("Agent-wise Details and Filters")
+        heading_rows = [
+            row_index for row_index in range(len(raw_channel_sheet))
+            if is_section_heading(row_index)
+        ]
 
-        col1, col2, col3 = st.columns(3)
+        def display_header(value, index):
+            if isinstance(value, (pd.Timestamp, datetime, date)):
+                return pd.Timestamp(value).strftime("%b-%y")
+            if isinstance(value, str):
+                parsed = parse_month_header(value.strip())
+                if pd.notna(parsed):
+                    return parsed.strftime("%b-%y")
+                clean = value.strip()
+                return clean if clean else f"Column {index + 1}"
+            if pd.isna(value):
+                return f"Column {index + 1}"
+            return str(value).strip()
 
-        agent_search = broker_search = posp_search = ""
+        def make_unique_headers(headers):
+            counts = {}
+            result = []
+            for header in headers:
+                base = str(header).strip() or "Column"
+                counts[base] = counts.get(base, 0) + 1
+                result.append(base if counts[base] == 1 else f"{base}.{counts[base]}")
+            return result
 
-        agent_column = next(
-            (
-                c for c in ["AGENT", "Party Name"]
-                if c in df.columns
-            ),
-            None,
-        )
+        for section_number, heading_row in enumerate(heading_rows):
+            raw_heading = str(raw_channel_sheet.iloc[heading_row, 1]).strip()
+            section_title = raw_heading[:-2].strip() if raw_heading.endswith(":-") else raw_heading
 
-        with col1:
-            if agent_column:
-                agent_search = st.text_input(
-                    f"Search by {agent_column}:"
+            next_heading = (
+                heading_rows[section_number + 1]
+                if section_number + 1 < len(heading_rows)
+                else len(raw_channel_sheet)
+            )
+
+            # Find the actual table header. Some sections have a short
+            # note row (e.g. revised premium) before their column headings.
+            header_row = None
+            best_score = -1
+            for candidate in range(heading_row + 1, min(heading_row + 7, next_heading)):
+                values = raw_channel_sheet.iloc[candidate].tolist()
+                nonempty = [v for v in values if pd.notna(v)]
+                if not nonempty:
+                    continue
+
+                text_values = " ".join(str(v).casefold() for v in nonempty if isinstance(v, str))
+                has_date = any(
+                    isinstance(v, (pd.Timestamp, datetime, date))
+                    or pd.notna(parse_month_header(v))
+                    for v in nonempty
                 )
+                score = 0
+                for token in ("party code", "party name", "premium", "share", "icr", "accretion"):
+                    if token in text_values:
+                        score += 2
+                if has_date:
+                    score += 3
+                if score > best_score:
+                    best_score = score
+                    header_row = candidate
 
-        with col2:
-            if "BROKER" in df.columns:
-                broker_search = st.text_input(
-                    "Search by BROKER:"
-                )
+            if header_row is None or best_score <= 0:
+                continue
 
-        with col3:
-            if "POSP" in df.columns:
-                posp_search = st.text_input(
-                    "Search by POSP:"
-                )
+            # End this table at the first fully blank row or next section heading.
+            data_end = next_heading
+            for candidate in range(header_row + 1, next_heading):
+                if not raw_channel_sheet.iloc[candidate].notna().any():
+                    data_end = candidate
+                    break
 
-        if agent_search and agent_column:
+            # The worksheet tables begin in column B. Keep all populated
+            # columns, including month columns through March.
+            first_col = 1
+            last_col = raw_channel_sheet.shape[1]
+            while last_col > first_col:
+                if raw_channel_sheet.iloc[header_row:data_end, last_col - 1].notna().any():
+                    break
+                last_col -= 1
 
-            final_df = final_df[
-                final_df[agent_column].astype(str).str.contains(
-                    agent_search,
-                    case=False,
-                    na=False,
-                    regex=False
-                )
-            ]
+            header_values = raw_channel_sheet.iloc[header_row, first_col:last_col].tolist()
+            headers = make_unique_headers([
+                display_header(value, index)
+                for index, value in enumerate(header_values)
+            ])
 
-        if broker_search and "BROKER" in final_df.columns:
+            table_data = raw_channel_sheet.iloc[
+                header_row + 1:data_end, first_col:last_col
+            ].copy()
+            table_data.columns = headers
+            table_data = table_data.dropna(how="all")
 
-            final_df = final_df[
-                final_df["BROKER"].astype(str).str.contains(
-                    broker_search,
-                    case=False,
-                    na=False,
-                    regex=False
-                )
-            ]
+            if table_data.empty:
+                continue
 
-        if posp_search and "POSP" in final_df.columns:
+            # Keep text identifiers as text; numeric measures remain numeric.
+            for column in table_data.columns[1:]:
+                if any(
+                    token in str(column).upper()
+                    for token in ("ICR", "ACCRETION", "GROWTH", "SHARE", "%")
+                ):
+                    continue
+                if re.match(r"^[A-Z][a-z]{2}-\d{2}$", str(column)):
+                    continue
 
-            final_df = final_df[
-                final_df["POSP"].astype(str).str.contains(
-                    posp_search,
-                    case=False,
-                    na=False,
-                    regex=False
-                )
-            ]
+            st.markdown(f"#### {section_title}")
+
+            # Large detail sections get a simple search box.
+            search_text = st.text_input(
+                f"Search {section_title}",
+                key=f"channel_search_{selected_sheet}_{section_number}",
+            )
+            if search_text:
+                mask = table_data.astype(str).apply(
+                    lambda column: column.str.contains(
+                        search_text, case=False, na=False, regex=False
+                    )
+                ).any(axis=1)
+                table_data = table_data.loc[mask]
+
+            column_config = {}
+            for column in table_data.columns:
+                upper = str(column).upper()
+                if any(token in upper for token in ("ICR", "ACCRETION", "GROWTH", "SHARE", "%")):
+                    column_config[column] = st.column_config.NumberColumn(
+                        format="%.2f%%"
+                    )
+                elif (
+                    re.match(r"^[A-Z][a-z]{2}-\d{2}$", str(column))
+                    or "PREMIUM" in upper
+                    or "TOTAL" in upper
+                ):
+                    column_config[column] = st.column_config.NumberColumn(
+                        format="₹ %,.0f"
+                    )
+                else:
+                    column_config[column] = st.column_config.TextColumn()
+
+            st.dataframe(
+                table_data,
+                use_container_width=True,
+                hide_index=True,
+                column_config=column_config,
+            )
+
+            section_csv = table_data.to_csv(index=False).encode("utf-8-sig")
+            st.download_button(
+                label=f"📥 Download {section_title} as CSV",
+                data=section_csv,
+                file_name=(
+                    f"{selected_sheet.replace(' ', '_')}_"
+                    f"{section_number + 1}.csv"
+                ),
+                mime="text/csv",
+                key=f"download_{selected_sheet}_{section_number}",
+            )
+
+            st.markdown("---")
 
     elif selected_sheet == "MISP":
 
@@ -1015,24 +1059,26 @@ try:
             st.column_config.TextColumn(pinned="left"),
         )
 
-    # Display table and CSV download.
-    st.dataframe(
-        final_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config=col_format_config,
-    )
+    # Display the ordinary single-table worksheets.
+    # Channel worksheets were already rendered section-by-section above.
+    if selected_sheet not in channel_sheets:
+        st.dataframe(
+            final_df,
+            use_container_width=True,
+            hide_index=True,
+            column_config=col_format_config,
+        )
 
-    csv_data = final_df.to_csv(
-        index=False
-    ).encode("utf-8-sig")
+        csv_data = final_df.to_csv(
+            index=False
+        ).encode("utf-8-sig")
 
-    st.download_button(
-        label=f"📥 Download '{selected_sheet}' Data as CSV",
-        data=csv_data,
-        file_name=f"{selected_sheet.replace(' ', '_')}_filtered.csv",
-        mime="text/csv",
-    )
+        st.download_button(
+            label=f"📥 Download '{selected_sheet}' Data as CSV",
+            data=csv_data,
+            file_name=f"{selected_sheet.replace(' ', '_')}_filtered.csv",
+            mime="text/csv",
+        )
 
 except Exception as error:
 
