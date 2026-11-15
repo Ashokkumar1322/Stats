@@ -985,9 +985,20 @@ try:
                 table_data = table_data.loc[mask]
 
             column_config = {}
+            is_growth_section = "GROWTH" in section_title.upper()
+            first_table_column = table_data.columns[0]
+
             for column in table_data.columns:
                 upper = str(column).upper()
-                if any(token in upper for token in ("ICR", "ACCRETION", "GROWTH", "SHARE", "%")):
+
+                # Month headings in the channel-wise growth section are dates,
+                # not labels containing the word GROWTH. Format every numeric
+                # month column in this section as a percentage with 2 decimals.
+                if is_growth_section and column != first_table_column:
+                    column_config[column] = st.column_config.NumberColumn(
+                        format="%.2f%%"
+                    )
+                elif any(token in upper for token in ("ICR", "ACCRETION", "GROWTH", "SHARE", "%")):
                     column_config[column] = st.column_config.NumberColumn(
                         format="%.2f%%"
                     )
