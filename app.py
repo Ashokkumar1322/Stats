@@ -74,7 +74,7 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
         for column in df.columns:
             if isinstance(column, (pd.Timestamp, datetime, date)):
                 new_columns.append(
-                    pd.Timestamp(column).strftime("%b-%y").upper()
+                    pd.Timestamp(column).strftime("%b-%y")
                 )
             else:
                 column_text = str(column).strip()
@@ -100,7 +100,7 @@ def load_all_excel_sheets(file_bytes, file_name, file_mtime=None):
 
                 if pd.notna(parsed_date):
                     new_columns.append(
-                        parsed_date.strftime("%b-%y").upper()
+                        parsed_date.strftime("%b-%y")
                     )
                 else:
                     new_columns.append(column_text)
@@ -251,7 +251,7 @@ try:
     engine = "xlrd" if extension == ".xls" else "openpyxl"
 
     # -----------------------------------------------------
-    # FIND MONTHLY COMPARISON SHEET
+    # FIND MONTHLY COMPARISON SHEET (used below for LOB accretion)
     # -----------------------------------------------------
     monthly_sheet_name = next(
         (
@@ -263,9 +263,7 @@ try:
     )
 
     df_monthly_raw = None
-
     if monthly_sheet_name is not None:
-
         df_monthly_raw = pd.read_excel(
             BytesIO(file_bytes),
             sheet_name=monthly_sheet_name,
@@ -273,73 +271,91 @@ try:
             engine=engine,
         )
 
-        if df_monthly_raw.shape[0] >= 29:
+    # -----------------------------------------------------
+    # TOP PREMIUM / ACCRETION + CHANNEL-WISE GROWTH
+    # Source: Channel wise 26 27
+    # Excel row 299 = total premium; row 308 = total accretion
+    # Excel rows 302:307 = channel-wise growth
+    # Excel columns I:N = Oct 2026 to Mar 2027
+    # -----------------------------------------------------
+    channel_sheet_name = next(
+        (
+            name for name in sheet_names
+            if name.strip().casefold() == "channel wise 26 27"
+        ),
+        None,
+    )
 
-            header_row = df_monthly_raw.iloc[1]
-            total_row = df_monthly_raw.iloc[28]
+    channel_growth_rows = []
+    channel_month_text = "latest month"
+    total_premium_value = "N/A"
+    premium_label = "Up to latest month Premium"
+    accretion_label = "Accretion % Up to latest month"
+    accretion_value = "N/A"
 
-            monthly_candidates = []
+    if channel_sheet_name is not None:
+        channel_raw = pd.read_excel(
+            BytesIO(file_bytes),
+            sheet_name=channel_sheet_name,
+            header=None,
+            engine=engine,
+        )
 
-            # Find latest month with matching premium
-            # and accretion headings.
-            for column_index, heading in enumerate(header_row):
+        # Excel row 292 (zero-based 291) contains month dates.
+        # Excel row 299 (zero-based 298) contains cumulative premium.
+        # Excel row 308 (zero-based 307) contains total accretion.
+        if channel_raw.shape[0] >= 308 and channel_raw.shape[1] >= 14:
+            month_header = channel_raw.iloc[291]
+            premium_total_row = channel_raw.iloc[298]
+            accretion_total_row = channel_raw.iloc[307]
 
-                month_date = parse_month_header(heading)
-
-                if (
-                    pd.isna(month_date)
-                    or month_date < pd.Timestamp("2026-04-01")
-                    or month_date > pd.Timestamp("2027-03-31")
-                ):
-                    continue
-
-                accretion_index = column_index + 1
-
-                if accretion_index >= len(header_row):
-                    continue
-
-                accretion_heading = str(
-                    header_row.iloc[accretion_index]
-                ).strip()
-
-                expected_month = month_date.strftime("%b %y")
-
-                if "accretion" not in accretion_heading.casefold():
-                    continue
-
-                if expected_month.casefold() not in accretion_heading.casefold():
-                    continue
-
-                premium_cell = total_row.iloc[column_index]
-                accretion_cell = total_row.iloc[accretion_index]
-
-                if pd.notna(premium_cell) and pd.notna(accretion_cell):
-                    monthly_candidates.append(
-                        (month_date, premium_cell, accretion_cell)
+            available_months = []
+            for col_index in range(2, min(14, len(month_header))):
+                month_date = parse_month_header(month_header.iloc[col_index])
+                premium_cell = pd.to_numeric(
+                    premium_total_row.iloc[col_index], errors="coerce"
+                )
+                if pd.notna(month_date) and pd.notna(premium_cell):
+                    available_months.append(
+                        (month_date, col_index, premium_cell)
                     )
 
-            if monthly_candidates:
-
-                latest_month, premium_cell, accretion_cell = max(
-                    monthly_candidates,
-                    key=lambda item: item[0]
+            if available_months:
+                latest_month, latest_col, premium_cell = max(
+                    available_months, key=lambda item: item[0]
                 )
-
-                month_label = latest_month.strftime("%b %y")
-
-                premium_label = f"Up to {month_label} Premium"
-                accretion_label = f"Accretion % Up to {month_label}"
-
+                channel_month_text = latest_month.strftime("%b %y")
+                premium_label = f"Up to {channel_month_text} Premium"
+                accretion_label = f"Accretion % Up to {channel_month_text}"
                 total_premium_value = (
                     f"₹ {format_indian_number(premium_cell)}"
                 )
 
-                accretion_value = f"{float(accretion_cell):.2f}%"
+                accretion_cell = pd.to_numeric(
+                    accretion_total_row.iloc[latest_col], errors="coerce"
+                )
+                if pd.notna(accretion_cell):
+                    accretion_value = f"{float(accretion_cell):.2f}%"
 
+                # Excel rows 302 to 307: AGENCY through CORP AGENT SF.
+                for excel_row in range(302, 308):
+                    row_index = excel_row - 1
+                    channel_name = str(
+                        channel_raw.iloc[row_index, 1]
+                    ).strip()
+                    growth_value = pd.to_numeric(
+                        channel_raw.iloc[row_index, latest_col],
+                        errors="coerce",
+                    )
+                    channel_growth_rows.append(
+                        (channel_name, growth_value)
+                    )
+            else:
+                st.warning(
+                    "No populated month was found in 'Channel wise 26 27'."
+                )
     else:
-        st.warning(
-            "Worksheet 'revised upto mon comp 2526 2627' not found."
-        )
+        st.warning("Worksheet 'Channel wise 26 27' was not found.")
 
     # -----------------------------------------------------
     # ICR FIGURES: F25 AND G25
@@ -382,6 +398,24 @@ try:
     k2.metric(accretion_label, accretion_value)
     k3.metric("ICR % on Total Premium", icr_total_value)
     k4.metric("ICR % on Earned Premium", icr_earned_value)
+
+    # -----------------------------------------------------
+    # CHANNEL-WISE GROWTH
+    # -----------------------------------------------------
+    st.markdown(f"#### Channel-wise Growth up to {channel_month_text}")
+    if channel_growth_rows:
+        growth_columns = st.columns(6)
+        for growth_column, (channel_name, growth_value) in zip(
+            growth_columns, channel_growth_rows
+        ):
+            display_value = (
+                f"{float(growth_value):.2f}%"
+                if pd.notna(growth_value)
+                else "—"
+            )
+            growth_column.metric(channel_name, display_value)
+    else:
+        st.info("Channel-wise growth figures are not available.")
 
     # -----------------------------------------------------
     # LOB / DEPARTMENT-WISE ACCRETION
@@ -1014,4 +1048,4 @@ except Exception as error:
     st.info(
         "For .xls files, ensure xlrd is listed in requirements.txt. "
         "For .xlsx files, openpyxl is required."
-    )
+    )     
