@@ -323,6 +323,8 @@ try:
                 return heading_row, None, None
             return heading_row, header_row, channel_raw.iloc[header_row]
 
+        latest_col = None
+
         # Cumulative premium table: locate the TOTAL row and latest
         # month dynamically (currently Oct-26; next month will move on).
         _, cumulative_header_row, cumulative_header = get_table_after_heading(
@@ -353,46 +355,47 @@ try:
                     channel_month_text = latest_month.strftime("%b %y")
                     premium_label = f"Up to {channel_month_text} Premium"
                     total_premium_value = f"₹ {format_indian_number(premium_cell)}"
+        # Update this cell in Excel each month; the dashboard label follows
+        # the latest month with an actual cumulative premium figure.
+        accretion_cell = (
+            channel_raw.iloc[285, 6]
+            if channel_raw.shape[0] > 285 and channel_raw.shape[1] > 6
+            else None
+        )
+        if pd.notna(accretion_cell):
+            accretion_value = f"{float(pd.to_numeric(accretion_cell, errors='coerce')):.2f}%"
+            accretion_label = f"Accretion % Up to {channel_month_text}"
 
-        # Total accretion is the TOTAL row in the growth section.
+        # Channel-wise growth: use the same latest populated month column
+        # as the cumulative premium table (I for Oct-26, J for Nov-26, etc.).
+        # The six channel rows are AGENCY through CORP AGENT SF; exclude TOTAL.
         _, growth_header_row, growth_header = get_table_after_heading(
             "CHANNEL WISE GROWTH UPTO EACH MONTH"
         )
-        if growth_header_row is not None:
-            growth_total_row = None
+        if growth_header_row is not None and latest_col is not None:
+            channel_order = [
+                "AGENCY", "BANCA", "BROKER", "DIRECT", "POSP", "CORP AGENT SF"
+            ]
+            growth_row_lookup = {}
             for row_index in range(growth_header_row + 1, len(channel_raw)):
-                label = str(channel_raw.iloc[row_index, 1]).strip().upper()
-                if label == "TOTAL":
-                    growth_total_row = channel_raw.iloc[row_index]
+                raw_name = channel_raw.iloc[row_index, 1]
+                if pd.isna(raw_name):
+                    continue
+                channel_name = str(raw_name).strip().upper()
+                if channel_name == "TOTAL":
                     break
-                if row_index > growth_header_row + 1 and not channel_raw.iloc[row_index].notna().any():
-                    break
+                growth_row_lookup[channel_name] = row_index
 
-            if growth_total_row is not None:
-                growth_candidates = []
-                for col_index in range(2, len(growth_header)):
-                    parsed = parse_month_header(growth_header.iloc[col_index])
-                    value = pd.to_numeric(growth_total_row.iloc[col_index], errors="coerce")
-                    if pd.notna(parsed) and pd.notna(value):
-                        growth_candidates.append((parsed, col_index, value))
-                if growth_candidates:
-                    latest_growth_month, growth_col, growth_value = max(
-                        growth_candidates, key=lambda item: item[0]
+            for channel_name in channel_order:
+                row_index = growth_row_lookup.get(channel_name)
+                if row_index is None or latest_col >= channel_raw.shape[1]:
+                    growth_value = None
+                else:
+                    growth_value = pd.to_numeric(
+                        channel_raw.iloc[row_index, latest_col], errors="coerce"
                     )
-                    accretion_label = f"Accretion % Up to {latest_growth_month.strftime('%b %y')}"
-                    accretion_value = f"{float(growth_value):.2f}%"
+                channel_growth_rows.append((channel_name, growth_value))
 
-                    # Six channel growth figures for the same latest month.
-                    for row_index in range(growth_header_row + 1, len(channel_raw)):
-                        channel_name = channel_raw.iloc[row_index, 1]
-                        if pd.isna(channel_name) or str(channel_name).strip().upper() == "TOTAL":
-                            if str(channel_name).strip().upper() == "TOTAL":
-                                break
-                            continue
-                        value = pd.to_numeric(
-                            channel_raw.iloc[row_index, growth_col], errors="coerce"
-                        )
-                        channel_growth_rows.append((str(channel_name).strip(), value))
 
         # Channel-wise share of premium: values are in Excel D280:D285.
         # Find the summary section and read the six channel rows below
