@@ -700,7 +700,7 @@ try:
                     continue
 
                 if code == "031":
-                    display_name = "Motor Own Damage (031)"
+                    display_name = "(031) Motor Own Damage"
                 else:
                     display_name = dept_text
 
@@ -753,7 +753,7 @@ try:
             # Replace individual 031 line with three motor summaries.
             compact_rows = [
                 item for item in compact_rows
-                if item[0] != "Motor Own Damage (031)"
+                if item[0] != "(031) Motor Own Damage"
             ]
 
             insert_at = 0
@@ -764,12 +764,12 @@ try:
 
             motor_items = [
                 (
-                    "Motor Own Damage (031)",
+                    "(031) Motor Own Damage",
                     display_percent(motor_od_value),
                     display_percent(premium_share(motor_od_premium)),
                 ),
                 (
-                    "Motor TP (032+033+038+039)",
+                    "(032+033+038+039) Motor TP",
                     display_percent(motor_tp_value, True),
                     display_percent(premium_share(motor_tp_premium)),
                 ),
