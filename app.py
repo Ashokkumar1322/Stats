@@ -627,6 +627,52 @@ try:
 
                 return f"{numeric_value:.2f}%"
 
+            # -------------------------------------------------
+            # SHARE OF PREMIUM: use the same latest cumulative
+            # month as the accretion figure and the total row
+            # from this worksheet as the denominator.
+            # -------------------------------------------------
+            current_premium_col = premium_month_columns.get(
+                latest_period.year
+            )
+
+            total_lob_premium = None
+            if current_premium_col is not None:
+                total_row_mask = (
+                    df_monthly_raw.iloc[:, 0]
+                    .astype(str)
+                    .str.strip()
+                    .str.casefold()
+                    .eq("sum for all departments")
+                )
+                total_rows = df_monthly_raw.loc[total_row_mask]
+
+                if not total_rows.empty:
+                    total_lob_premium = pd.to_numeric(
+                        total_rows.iloc[0, current_premium_col],
+                        errors="coerce",
+                    )
+
+            def premium_for_code(code):
+                row = find_code_row(code)
+                if row is None or current_premium_col is None:
+                    return 0.0
+
+                value = pd.to_numeric(
+                    row.iloc[current_premium_col],
+                    errors="coerce",
+                )
+                return float(value) if pd.notna(value) else 0.0
+
+            def premium_share(premium_amount):
+                if (
+                    total_lob_premium is None
+                    or pd.isna(total_lob_premium)
+                    or total_lob_premium == 0
+                ):
+                    return None
+                return (float(premium_amount) / float(total_lob_premium)) * 100
+
             compact_rows = []
 
             excluded_motor_tp_codes = {
@@ -659,9 +705,25 @@ try:
                     display_name = dept_text
 
                 source_value = row.iloc[latest_accretion_col]
+                premium_amount = (
+                    pd.to_numeric(
+                        row.iloc[current_premium_col],
+                        errors="coerce",
+                    )
+                    if current_premium_col is not None
+                    else None
+                )
 
                 compact_rows.append(
-                    (display_name, display_percent(source_value))
+                    (
+                        display_name,
+                        display_percent(source_value),
+                        display_percent(
+                            premium_share(premium_amount)
+                            if premium_amount is not None and pd.notna(premium_amount)
+                            else None
+                        ),
+                    )
                 )
 
             # Calculate the three motor figures.
@@ -672,6 +734,13 @@ try:
                 if motor_od_row is not None
                 else None
             )
+
+            motor_od_premium = premium_for_code("031")
+            motor_tp_premium = sum(
+                premium_for_code(code)
+                for code in ["032", "033", "038", "039"]
+            )
+            overall_motor_premium = motor_od_premium + motor_tp_premium
 
             motor_tp_value = motor_group_accretion(
                 ["032", "033", "038", "039"]
@@ -689,22 +758,25 @@ try:
 
             insert_at = 0
 
-            for index, (label, _) in enumerate(compact_rows):
+            for index, (label, _, _) in enumerate(compact_rows):
                 if label.startswith("011 -"):
                     insert_at = index + 1
 
             motor_items = [
                 (
                     "Motor Own Damage (031)",
-                    display_percent(motor_od_value)
+                    display_percent(motor_od_value),
+                    display_percent(premium_share(motor_od_premium)),
                 ),
                 (
                     "Motor TP (032+033+038+039)",
-                    display_percent(motor_tp_value, True)
+                    display_percent(motor_tp_value, True),
+                    display_percent(premium_share(motor_tp_premium)),
                 ),
                 (
                     "Overall Motor (OD + TP)",
-                    display_percent(overall_motor_value, True)
+                    display_percent(overall_motor_value, True),
+                    display_percent(premium_share(overall_motor_premium)),
                 ),
             ]
 
@@ -718,21 +790,29 @@ try:
                 + "</td><td style='padding:4px 10px;"
                 "text-align:right;border-bottom:1px solid #ddd;"
                 "font-variant-numeric:tabular-nums;'>"
-                + html.escape(value)
+                + html.escape(accretion_value)
+                + "</td><td style='padding:4px 10px;text-align:right;"
+                "border-bottom:1px solid #ddd;"
+                "font-variant-numeric:tabular-nums;'>"
+                + html.escape(share_value)
                 + "</td></tr>"
-                for label, value in compact_rows
+                for label, accretion_value, share_value in compact_rows
             )
 
-            st.caption(f"Accretion up to {month_text}")
+            st.caption(
+                f"Accretion and Share of Premium up to {month_text}"
+            )
 
             st.markdown(
-                "<div style='font-size:13px;max-width:760px;'>"
+                "<div style='font-size:13px;max-width:950px;'>"
                 "<table style='width:100%;border-collapse:collapse;'>"
                 "<thead><tr>"
                 "<th style='text-align:left;padding:5px 10px;'>"
                 "LOB / Department</th>"
                 "<th style='text-align:right;padding:5px 10px;'>"
                 "Accretion %</th>"
+                "<th style='text-align:right;padding:5px 10px;'>"
+                "Share of Premium %</th>"
                 "</tr></thead><tbody>"
                 + table_rows_html
                 + "</tbody></table></div>",
